@@ -2,6 +2,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
+import json
 from collections import namedtuple
 import settings
 
@@ -50,6 +51,33 @@ def prefix_format(prefix):
     return prefix.split('(')[prefix.count('(')].split(')')[0]
 
 
+def graphite_request(session, url, prefix, timewindow):
+    composed_url = '{0}/render/?target={1}&from=-{2}&format=json'.format(url, prefix, timewindow)
+    response = session.get(composed_url)
+    return response.json()
+
+
+def graphite_checker(response):
+    for target in range(len(response)):
+        datapoints = response[target]['datapoints']
+        pointer = 0
+        for data_p in datapoints:
+            if data_p[0] is not None:
+                pointer += 1
+        if pointer == 0:
+            print(response[target]['target'], timewindow, 'NO DATA')
+        else:
+            print(response[target]['target'], timewindow, 'Checked')
+
+
+def elk_chckr():
+    pass
+
+
+def influx_chckr():
+    pass
+
+
 class GrafanaChecker:
 
     def __init__(self, url_api, proxy, headers):
@@ -68,7 +96,7 @@ class GrafanaChecker:
         response = self.session.get(composed_url)
         return response.json()[0]['uid']
 
-    def get_dashinfo(self, uid):
+    def graphite_dashinfo(self, uid):
         composed_url = '{0}/dashboards/uid/{1}'.format(self.url_api, uid)
         response = self.session.get(composed_url)
         panels = response.json()['dashboard']['panels']
@@ -89,26 +117,41 @@ class GrafanaChecker:
                     target.append(meta_dash)
             else:
                 prefix = pretty_search(panels[id]['targets'], 'target').pop()
-                if '(' or ')' in prefix:
+                if '(' and ')' in prefix:
                     prefix = prefix_format(prefix)
                 meta_dash = Meta_dash(panels[id]['title'], datasource, prefix)
                 target.append(meta_dash)
         return target
 
-    @staticmethod
-    def checker(dash_lst):
-        pass
+    def datasource_url(self, datasource_name):
+        composed_url = '{0}/datasources/name/{1}'.format(self.url_api, datasource_name)
+        response = self.session.get(composed_url)
+        return response.json()
 
 
-headers = {"Authorization": "Bearer {}".format(settings.token)}
-url_api = 'http://grafana-staging/api'
-proxy = {}
-dash_list = ('Netflix', 14400)
+
 Meta_dash = namedtuple('Meta_dash', ['title', 'datasource', 'prefix'])
-graf = GrafanaChecker(url_api, proxy, headers)
 
-uid = graf.get_uid(dash_list[0])
+graf = GrafanaChecker(settings.url_api, settings.proxy, settings.headers)
+uid = graf.get_uid(settings.dash_list[0])
 
-[print(aim) for aim in graf.get_dashinfo(uid)]
+# [print(aim) for aim in graf.graphite_dashinfo(uid)]
+
+
+# print(graf.datasource_url(datasource_name))
+
+# default graphite datasource
+datasource_name = 'http://graphite-islogs'
+with requests.Session() as session:
+    timewindow = '10min'
+    for meta_dash in graf.graphite_dashinfo(uid):
+        if meta_dash.datasource is not 'default':
+            datasource_name = graf.datasource_url(meta_dash.datasource)['url'].replace('/api', '')
+            # print(datasource_name)
+        if 'graphite' in datasource_name:
+            # print(datasource_name)
+            response = graphite_request(session, datasource_name, meta_dash.prefix, timewindow)
+            graphite_checker(response)
+
 
 
