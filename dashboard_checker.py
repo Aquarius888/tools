@@ -51,19 +51,104 @@ def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
     return search_result if search_result else None
 
 
-# Holly shit! Need to review it!!!
-# The function takes grafana prefix with grafana functions and parses it
+# TODO: review, may be it is needed to replace on regex
 def prefix_format(prefix):
-    return prefix.split('(')[prefix.count('(')].split(')')[0]
+    """
+    Parses input, extract prefix (query) from brackets and separate not needed symbols
+    :param prefix: grafana prefix (query) with grafana functions
+    :return: clear prefix
+    """
+    clear_prefix = prefix.split('(')[prefix.count('(')].split(')')[0]
+    if ',' in clear_prefix:
+        clear_prefix = clear_prefix.split(',')[0]
+    return clear_prefix
+
+
+def panel_info(panels_info):
+    """
+
+    :param panels_info: json from Grafana's request
+    :return: list of namedtuples with info for checked panels
+    """
+    meta_list = []
+
+    for id in range(len(panels_info)):
+
+        if 'datasource' in panels_info[id]:
+            datasource = panels_info[id]['datasource']
+        else:
+            datasource = 'default'
+
+        target_list = panels_info[id]['targets']
+
+        if len(target_list) > 1:
+            for target in target_list:
+                # don't execute if query is disabled
+                hide = pretty_search(target, 'hide')
+                if hide and True in hide:
+                    continue
+
+                # global datasource is Mixed
+                # if 'Mixed' in datasource:
+                if 'datasource' in target:
+                    datasource = target['datasource']
+
+                # extract prefix for graphite or query for influx and elastic
+                prefix = pretty_search(target, 'query')
+                if not prefix:
+                    prefix = pretty_search(target, 'target')
+
+                # extract value from set
+                prefix = prefix.pop()
+                ref_id = pretty_search(target, 'refId').pop()
+
+                meta_dash = Meta_dash(panels_info[id]['id'], panels_info[id]['title'], datasource, ref_id, prefix)
+                meta_list.append(meta_dash)
+        else:
+            # don't execute if query is disabled
+            hide = pretty_search(target_list, 'hide')
+            if hide and True in hide:
+                continue
+
+            # case: one query on panel, but global datasource is Mixed
+            #if 'Mixed' in datasource:
+            if 'datasource' in target:
+                datasource = pretty_search(target_list, 'datasource').pop()
+
+            # extract prefix for graphite or query for influx and elastic
+            prefix = pretty_search(target_list, 'query')
+            if not prefix:
+                prefix = pretty_search(target_list, 'target')
+
+            # extract value from set
+            prefix = prefix.pop()
+            ref_id = pretty_search(target_list, 'refId').pop()
+
+            meta_dash = Meta_dash(panels_info[id]['id'], panels_info[id]['title'], datasource, ref_id, prefix)
+            meta_list.append(meta_dash)
+    return meta_list
 
 
 def graphite_request(session, url, prefix, timewindow):
+    """
+    Makes a request to Graphite about data in (target) 'prefix' for timewindow
+    :param session: requests session with Graphite server
+    :param url: url of Graphite server
+    :param prefix: path (prefix) identifying one or several metrics
+    :param timewindow: relative timewindow (for ex, if it is 4h, it means 'last 4 hours')
+    :return: response in json
+    """
     composed_url = '{0}/render/?target={1}&from=-{2}&format=json'.format(url, prefix, timewindow)
     response = session.get(composed_url)
     return response.json()
 
 
 def graphite_checker(response):
+    """
+    Checks a request about data existential
+    :param response: graphite data (in json) with information about query for timewindow
+    :return: list of tuple with note about data existential
+    """
     data_lst = []
     for target in range(len(response)):
         datapoints = response[target]['datapoints']
@@ -72,9 +157,9 @@ def graphite_checker(response):
             if data_p[0] is not None:
                 pointer += 1
         if pointer == 0:
-            data_lst.append((response[target]['target'], timewindow, 'NO DATA'))
+            data_lst.append((response[target]['target'], 'NO DATA'))
         else:
-            data_lst.append((response[target]['target'], timewindow, 'Checked'))
+            data_lst.append((response[target]['target'], 'Checked'))
     return data_lst
 
 
@@ -109,53 +194,11 @@ class GrafanaMaker:
         response = self.session.get(composed_url)
         return response.json()[0]['id'], response.json()[0]['uid']
 
-    def grafana_dashinfo(self, uid):
+    def get_panels_info(self, uid):
         composed_url = '{0}/dashboards/uid/{1}'.format(self.url_api, uid)
         response = self.session.get(composed_url)
         panels = response.json()['dashboard']['panels']
-
-        meta_list = []
-
-        for id in range(len(panels)):
-            if 'datasource' in panels[id]:
-                datasource = panels[id]['datasource']
-            else:
-                datasource = 'default'
-
-            #print(panels[id])
-
-            if len(panels[id]['targets']) > 1:
-                for target in range(len(panels[id]['targets'])):
-                    # don't execute if query is disabled
-                    hide = pretty_search(panels[id]['targets'][target], 'hide')
-                    if hide and True in hide:
-                        continue
-
-                    prefix = pretty_search(panels[id]['targets'][target], 'target').pop()
-
-                    # extract prefix from brackets
-                    if '(' or ')' in prefix:
-                        prefix = prefix_format(prefix)
-
-                    ref_id = pretty_search(panels[id]['targets'][target], 'refId').pop()
-                    meta_dash = Meta_dash(panels[id]['id'], panels[id]['title'], datasource, ref_id, prefix)
-                    meta_list.append(meta_dash)
-            else:
-                # don't execute if query is disabled
-                hide = pretty_search(panels[id]['targets'], 'hide')
-                if hide and True in hide:
-                    continue
-
-                prefix = pretty_search(panels[id]['targets'], 'target').pop()
-
-                # extract prefix from brackets
-                if '(' and ')' in prefix:
-                    prefix = prefix_format(prefix)
-
-                ref_id = pretty_search(panels[id]['targets'], 'refId').pop()
-                meta_dash = Meta_dash(panels[id]['id'], panels[id]['title'], datasource, ref_id, prefix)
-                meta_list.append(meta_dash)
-        return meta_list
+        return panels
 
     def datasource_url(self, datasource_name):
         composed_url = '{0}/datasources/name/{1}'.format(self.url_api, datasource_name)
@@ -176,46 +219,61 @@ class GrafanaMaker:
         return response.text
 
 
+# TODO: describe default and 'personal' (extract from panel title and multiple on N) timewindow
 Meta_dash = namedtuple('Meta_dash', ['panel_id', 'title', 'datasource', 'ref_id', 'prefix'])
+Id_dash = namedtuple('Id_dash', ['name', 'id', 'uid', 'timewindow'])
 
 graf_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers)
 
-dash_id = graf_inst.get_uid(settings.dash_list[0])[0]
-uid = graf_inst.get_uid(settings.dash_list[0])[1]
+id_info_list = [Id_dash(dash[0],
+                        graf_inst.get_uid(dash[0])[0],
+                        graf_inst.get_uid(dash[0])[1],
+                        dash[1])
+                for dash in settings.dash_list]
 
-# print info for each graph in dashboard
-# [print(graph) for graph in graf_inst.grafana_dashinfo(uid)]
+for dash_id_info in id_info_list:
+    print('====================================================')
+    #print(graf_inst.get_panels_info(dash_id_info.uid))
 
-timewindow = '30min'
-for meta_dash in graf_inst.grafana_dashinfo(uid):
+    for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
 
-    # default datasource
-    datasource_name = 'http://graphite-islogs'
+        # default datasource
+        datasource_name = 'http://graphite-islogs'
 
-    if meta_dash.datasource is not 'default':
-        datasource_name = graf_inst.datasource_url(meta_dash.datasource)['url'].replace('/api', '')
+        if 'default' not in meta_dash.datasource:
+            # print(meta_dash.datasource)
+            datasource_name = graf_inst.datasource_url(meta_dash.datasource)['url'].replace('/api', '')
 
-    # flow for Graphite
-    if 'graphite' in datasource_name:
-        with requests.Session() as session:
-            response = graphite_request(session, datasource_name, meta_dash.prefix, timewindow)
+        # flow for Graphite
+        if 'graphite' in datasource_name:
 
-            no_data = 0
-            for query in graphite_checker(response):
-                if 'NO DATA' in query:
-                    no_data += 1
+            # get clear string of prefix
+            prefix = prefix_format(meta_dash.prefix)
+            meta_dash = meta_dash._replace(prefix=prefix)
 
-            if no_data == len(graphite_checker(response)):
-                print(meta_dash.title,
-                      graf_inst.create_annotation(dash_id, meta_dash.panel_id, meta_dash.ref_id, timewindow))
+            # with requests.Session() as session:
+            #     metric_data = graphite_request(session, datasource_name, meta_dash.prefix, dash_id_info.timewindow)
+            #
+            #     no_data = 0
+            #     for query in graphite_checker(metric_data):
+            #         if 'NO DATA' in query:
+            #             no_data += 1
+            #
+            #     if no_data == len(graphite_checker(metric_data)):
+            #         print(dash_id_info.name, meta_dash.title, graf_inst.create_annotation(dash_id_info.id,
+            #                                                                                    meta_dash.panel_id,
+            #                                                                                    meta_dash.ref_id,
+            #                                                                                    dash_id_info.timewindow))
+        print(meta_dash)
+        print(datasource_name)
 
-    # TODO: implement a flow when elasticsearch as datasource
-    if 'elk' in datasource_name:
-        pass
+        # TODO: implement a flow when elasticsearch as datasource
+        if 'elk' in datasource_name:
+            pass
 
-    # TODO: implement a flow when influxDB as datasource
-    if 'influx' in datasource_name:
-        pass
+        # TODO: implement a flow when influxDB as datasource
+        if 'influx' in datasource_name:
+            pass
 
 
 
