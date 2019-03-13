@@ -9,9 +9,6 @@ from collections import namedtuple
 import settings
 
 
-current_timestamp = int(time.time()*1000)
-
-
 def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
     """
     Give it a dict or a list of dicts and a dict key (to get values of),
@@ -72,13 +69,21 @@ def panel_info(panels_info):
     :return: list of namedtuples with info for checked panels
     """
     meta_list = []
-    datasource = 'default'
-    for id in range(len(panels_info)):
 
-        if 'datasource' in panels_info[id]:
-            datasource = panels_info[id]['datasource']
+    for i in range(len(panels_info)):
+        datasource = 'default'
 
-        target_list = panels_info[id]['targets']
+        # Parser works ONLY for 'graph' type of
+        if panels_info[i]['type'] != 'graph':
+            continue
+
+        if 'datasource' in panels_info[i] and 'Mixed' not in panels_info[i]['datasource']:
+            datasource = panels_info[i]['datasource']
+
+        target_list = panels_info[i]['targets']
+
+        # TODO: data for elasticsearch query is here
+        # print(json.dumps(target_list, indent=4, sort_keys=False))
 
         if len(target_list) > 1:
             for target in target_list:
@@ -100,7 +105,7 @@ def panel_info(panels_info):
                 prefix = prefix.pop()
                 ref_id = pretty_search(target, 'refId').pop()
 
-                meta_dash = Meta_dash(panels_info[id]['id'], panels_info[id]['title'], datasource, ref_id, prefix)
+                meta_dash = Meta_dash(panels_info[i]['id'], panels_info[i]['title'], datasource, ref_id, prefix)
                 meta_list.append(meta_dash)
         else:
             # don't execute if query is disabled
@@ -109,7 +114,7 @@ def panel_info(panels_info):
                 continue
 
             # case: one query on panel, but global datasource is Mixed
-            if 'datasource' in target:
+            if 'datasource' in target_list:
                 datasource = pretty_search(target_list, 'datasource').pop()
 
             # extract prefix for graphite or query for influx and elastic
@@ -121,7 +126,7 @@ def panel_info(panels_info):
             prefix = prefix.pop()
             ref_id = pretty_search(target_list, 'refId').pop()
 
-            meta_dash = Meta_dash(panels_info[id]['id'], panels_info[id]['title'], datasource, ref_id, prefix)
+            meta_dash = Meta_dash(panels_info[i]['id'], panels_info[i]['title'], datasource, ref_id, prefix)
             meta_list.append(meta_dash)
     return meta_list
 
@@ -140,7 +145,6 @@ def graphite_request(session, url, prefix, timewindow):
     return response.json()
 
 
-# TODO: rewrite the function
 def graphite_checker(response):
     """
     Checks a request about data existential
@@ -165,24 +169,25 @@ def elk_chckr():
     pass
 
 
-def influx_chckr(response):
+def influx_checker(response):
     """
     Checks a request about data existential
     :param response: influxdb data (in json) with information about query for timewindow
     :return: list of tuple with note about data existential
     """
     data_lst = []
+    series = response['results'][0]['series'][0]
 
-    for target in range(len(response['results'][0]['series'])):
-        datapoints = response[target]['datapoints']
-        pointer = 0
-        for data_p in datapoints:
-            if data_p[0] is not None:
-                pointer += 1
-        if pointer == 0:
-            data_lst.append((response[target]['target'], 'NO DATA'))
-        else:
-            data_lst.append((response[target]['target'], 'Checked'))
+    datapoints = series['values']
+    pointer = 0
+    for data_p in datapoints:
+        if data_p[1] is not None:
+            pointer += 1
+    if pointer == 0:
+        data_lst.append((series['name'], 'NO DATA'))
+    else:
+        data_lst.append((series['name'], 'Checked'))
+
     return data_lst
 
 
@@ -260,20 +265,39 @@ class GrafanaMaker:
         return response.json()
 
 
-Meta_dash = namedtuple('Meta_dash', ['panel_id', 'title', 'datasource', 'ref_id', 'prefix'])
-Id_dash = namedtuple('Id_dash', ['name', 'id', 'uid', 'timewindow'])
+# default timewindow in sec
+timewindow = 14400
+# matching time prefix and seconds
+timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
+current_timestamp = int(time.time() * 1000)
+today = time.strftime("%Y.%m.%d", time.localtime())
+##################################################################################
 
+# datastructures
+Meta_dash = namedtuple('Meta_dash', ['panel_id', 'title', 'datasource', 'ref_id', 'prefix'])
+Id_dash = namedtuple('Id_dash', ['name', 'id', 'uid'])
+##################################################################################
+
+# create object - instance for work with Grafana
 graf_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers)
 
-id_info_list = [Id_dash(dash[0],
-                        graf_inst.get_uid(dash[0])[0],
-                        graf_inst.get_uid(dash[0])[1],
-                        dash[1])
+id_info_list = [Id_dash(dash,
+                        graf_inst.get_uid(dash)[0],
+                        graf_inst.get_uid(dash)[1])
                 for dash in settings.dash_list]
 
 for dash_id_info in id_info_list:
+    print('Dashboard \"{name}\" is on checking now'.format(name=dash_id_info.name))
 
     for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
+        # print(json.dumps(meta_dash, indent=4, sort_keys=False))
+
+        # convert relevant time in title if it exists
+        reg = re.search(r'\s\(\d+[dhms]\)', meta_dash.title)
+        if reg:
+            timestring = reg.group().strip('( )')
+            timewindow = int(re.search(r'\d+', timestring).group()) * \
+                         timeprefix.get(re.search(r'\D', timestring).group())
 
         if 'default' in meta_dash.datasource:
             datasource_info = graf_inst.datasource(settings.default_datasource_name)
@@ -282,41 +306,65 @@ for dash_id_info in id_info_list:
         datasource_id = datasource_info['id']
 
         # flow for Graphite
-        if 'graphite' in datasource_info['type']:
-
-            # get clear string of prefix
-            prefix = prefix_format(meta_dash.prefix)
-            metric_data = graf_inst.graphite_query(prefix, datasource_id)
-
-            # no_data = 0
-            # for query in graphite_checker(metric_data):
-            #     if 'NO DATA' in query:
-            #         no_data += 1
-            #
-            # if no_data == len(graphite_checker(metric_data)):
-            #     graf_inst.create_annotation(dash_id_info.id,
-            #                                 meta_dash.panel_id,
-            #                                 meta_dash.ref_id,
-            #                                 dash_id_info.timewindow)
-            #     print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
-            #           format(dashboard=dash_id_info.name, panel=meta_dash.title))
+        # if 'graphite' in datasource_info['type']:
+        #
+        #     # get clear string of prefix
+        #     prefix = prefix_format(meta_dash.prefix)
+        #     metric_data = graf_inst.graphite_query(prefix, datasource_id)
+        #
+        #     no_data = 0
+        #     for query in graphite_checker(metric_data):
+        #         print(query)
+        #         if 'NO DATA' in query:
+        #             no_data += 1
+        #
+        #     if no_data == len(graphite_checker(metric_data)):
+        #         graf_inst.create_annotation(dash_id_info.id,
+        #                                     meta_dash.panel_id,
+        #                                     meta_dash.ref_id,
+        #                                     timewindow)
+        #         print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+        #               format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
         # TODO: implement a flow when elasticsearch as datasource
         if 'elasticsearch' in datasource_info['type']:
-            print("Flow for elastic will be implemented later")
+            # print(json.dumps(datasource_info, indent=4, sort_keys=False))
 
-        # TODO: implement a flow when influxDB as datasource
-        if 'influxdb' in datasource_info['type']:
-            # replace
-            prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', meta_dash.prefix)
-            prefix = re.sub(r'\$\S*interval', '30s', prefix)
-            print(prefix)
+            # assumption timedelta not more than one day (23:59:59)
+            assert timewindow < 86400
 
-            metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
-            print(metric_data)
+            # create tuple of elasticsearch indeces for today and 'today - timewindow'
+            delta = time.strftime("%Y.%m.%d", time.localtime(time.time() - timewindow))
+            index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]')
+            elastic_indeces_reserve = (index_templ + today, index_templ + delta)
+            elastic_indeces = [index for index in set(elastic_indeces_reserve)]
+
+            print(elastic_indeces, datasource_info['database'])
+
+        # influxdb flow
+        # if 'influxdb' in datasource_info['type']:
+        #     # insert variable timewindow from graph title instead of 30m
+        #     prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', meta_dash.prefix)
+        #     # GROUP BY replacement
+        #     prefix = re.sub(r'\$\S*interval', '30s', prefix)
+        #
+        #     metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
+        #
+        #     no_data = 0
+        #     for query in influx_checker(metric_data):
+        #         if 'NO DATA' in query:
+        #             no_data += 1
+        #
+        #     # Seems like that there is only one query per graph for influxdb
+        #     if no_data == len(influx_checker(metric_data)):
+        #         graf_inst.create_annotation(dash_id_info.id,
+        #                                     meta_dash.panel_id,
+        #                                     meta_dash.ref_id,
+        #                                     timewindow)
+        #         print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+        #               format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
 # TODO: implement TIME (default and 'personal')
 # TODO: review Grafana variables in prefix
-# TODO: parsing dashboards only for type 'graph' visualization
 
 
