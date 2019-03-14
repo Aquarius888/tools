@@ -71,14 +71,14 @@ def panel_info(panels_info):
     meta_list = []
 
     for panel in panels_info:
-        datasource = 'default'
-
         # Parser works ONLY for 'graph' type of panels
         if panel['type'] != 'graph':
             continue
 
         if 'datasource' in panel and 'Mixed' not in panel['datasource']:
             datasource = panel['datasource']
+        else:
+            datasource = 'default'
 
         target_list = panel['targets']
 
@@ -102,8 +102,9 @@ def panel_info(panels_info):
                 continue
 
             # case: one query on panel, but global datasource is Mixed
-            if 'datasource' in target_list:
-                datasource = pretty_search(target_list, 'datasource')[0]
+            datasource_set = pretty_search(target_list, 'datasource')
+            if datasource_set:
+                datasource = datasource_set[0]
 
             meta_dash = Meta_dash(panel['id'], panel['title'], datasource, target_list)
             meta_list.append(meta_dash)
@@ -114,7 +115,7 @@ def ref_id(target_json):
     return pretty_search(target_json, 'refId')[0]
 
 
-def prefix(target_json):
+def prefix_extract(target_json):
     prfx = pretty_search(target_json, 'query')
     if not prfx:
         prfx = pretty_search(target_json, 'target')
@@ -242,11 +243,11 @@ class GrafanaMaker:
 
     def elastic_query(self, indices, timewindow, query, datasource_id):
 
-        gte = int(time.time() - timewindow * 1000)
+        gte = int(time.time() - timewindow*1000)
         lte = int(time.time())
 
         req_head = {
-            "search_type": "query_then_fetch",
+            "search_type":"query_then_fetch",
             "ignore_unavailable": True,
             "index": indices
         }
@@ -273,9 +274,9 @@ class GrafanaMaker:
                                     }
                             }
                     },
-                        {"query_string":
-                             {"analyze_wildcard": True,
-                              "query": elk_req}}]}}, "aggs": {}}
+            {"query_string":
+                 {"analyze_wildcard": True,
+                  "query": elk_req}}]}}, "aggs": {}}
         req_body['aggs'].update(substr)
         # print(json.dumps(request, indent=4))
         response = self.session.post('{base}/datasources/proxy/{datasource_id}/_msearch'.format(
@@ -295,7 +296,7 @@ class GrafanaMaker:
                 terms = {}
                 terms.update(bucket['settings'])
                 terms['field'] = bucket['field']
-                terms["extended_bounds"] = {"min": gte, "max": lte}
+                terms["extended_bounds"] = {"min":gte,"max":lte}
                 terms["format"] = "epoch_second"
                 aggs = {bucket['id']: {bucket['type']: terms}}
                 aggs["aggs"] = self._aggs_compose(aggs, bucket_aggs, gte, lte)
@@ -314,7 +315,7 @@ timewindow = 14400
 # matching time prefix and seconds
 timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
 # current time in ms
-current_timestamp = int(time.time() * 1000)
+current_timestamp = int(time.time()*1000)
 today = time.strftime("%Y.%m.%d", time.localtime())
 ##################################################################################
 
@@ -335,7 +336,6 @@ for dash_id_info in id_info_list:
     print('Dashboard \"{name}\" is on checking now'.format(name=dash_id_info.name))
 
     for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
-
         # convert relevant time in title if it exists
         reg = re.search(r'\s\(\d+[dhms]\)', meta_dash.title)
         if reg:
@@ -351,14 +351,12 @@ for dash_id_info in id_info_list:
 
         # flow for Graphite
         if 'graphite' in datasource_info['type']:
-
             # get clear string of prefix
-            prefix = prefix_format(prefix(meta_dash.target_json))
+            prefix = prefix_format(prefix_extract(meta_dash.target_json))
             metric_data = graf_inst.graphite_query(prefix, datasource_id)
 
             no_data = 0
             for query in graphite_checker(metric_data):
-                print(query)
                 if 'NO DATA' in query:
                     no_data += 1
 
@@ -372,6 +370,7 @@ for dash_id_info in id_info_list:
 
         # TODO: implement a flow when elasticsearch as datasource
         if 'elasticsearch' in datasource_info['type']:
+
             # assumption timedelta not more than one day (23:59:59)
             assert timewindow < 86400
 
@@ -381,13 +380,15 @@ for dash_id_info in id_info_list:
             elastic_indices_reserve = (index_templ + today, index_templ + delta)
             elastic_indices = [index for index in set(elastic_indices_reserve)]
 
+            print("Elasticsearch checker is not implemented yet")
+
             # it doesn't work now
-            graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
+            #graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
 
         # influxdb flow
         if 'influxdb' in datasource_info['type']:
             # insert variable timewindow from graph title instead of 30m
-            prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', prefix(meta_dash.target_json))
+            prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', prefix_extract(meta_dash.target_json))
             # GROUP BY replacement
             prefix = re.sub(r'\$\S*interval', '30s', prefix)
 
