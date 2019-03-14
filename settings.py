@@ -1,1 +1,0 @@
-token = "eyJrIjoiRHFMcVZvb3psVzBUSFN6ekpiaEZEMjNFM21LVjBzN3IiLCJuIjoiZGFzaC1jaGVja2VyIiwiaWQiOjF9"
