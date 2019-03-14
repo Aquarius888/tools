@@ -1,0 +1,12 @@
+# Grafana token
+token = "eyJrIjoiMjNtRmlyM3FDU0JVUDhJV1hQcmMwcU40SDNsNkRTYUIiLCJuIjoidHN0Y2hlY2tlciIsImlkIjoxfQ=="
+
+headers = {"Authorization": "Bearer {}".format(token), 'Accept': 'application/json', 'Content-Type': 'application/json'}
+url_api = 'http://grafana-staging/api'
+proxy = {}
+
+default_datasource_url = 'http://graphite-islogs'
+default_datasource_name = 'graphiterep'
+
+# list of dashboards for checking
+dash_list = ['Netflix', 'Netflix Copy']
