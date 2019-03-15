@@ -238,7 +238,7 @@ class GrafanaMaker:
             id=datasource_id
         )
         response = self.session.get(composed_url)
-        return  response.json()
+        return response.json()
 
     def create_annotation(self, dash_id, panel_id, ref_id, timewindow):
         """
@@ -303,11 +303,11 @@ class GrafanaMaker:
     # TODO: review with elasticsearch module
     def elastic_query(self, indices, timewindow, query, datasource_id):
 
-        gte = int(time.time() - timewindow*1000)
+        gte = int(time.time() - timewindow * 1000)
         lte = int(time.time())
 
         req_head = {
-            "search_type":"query_then_fetch",
+            "search_type": "query_then_fetch",
             "ignore_unavailable": True,
             "index": indices
         }
@@ -334,9 +334,9 @@ class GrafanaMaker:
                                     }
                             }
                     },
-            {"query_string":
-                 {"analyze_wildcard": True,
-                  "query": elk_req}}]}}, "aggs": {}}
+                        {"query_string":
+                             {"analyze_wildcard": True,
+                              "query": elk_req}}]}}, "aggs": {}}
         req_body['aggs'].update(substr)
         request = json.dumps(req_head) + '\n' + json.dumps(req_body) + '\n'
         response = self.session.post('{base}/datasources/proxy/{datasource_id}/_msearch'.format(
@@ -384,7 +384,7 @@ timewindow = 14400
 # matching time prefix and seconds
 timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
 # current time in ms
-current_timestamp = int(time.time()*1000)
+current_timestamp = int(time.time() * 1000)
 today = time.strftime("%Y.%m.%d", time.localtime())
 ##################################################################################
 
@@ -441,43 +441,41 @@ for dash_id_info in id_info_list:
 
         # TODO: implement a flow when elasticsearch as datasource
         # TODO: review python modules for requesting elastic (elasticsearch-dsl ?)
-        # if 'elasticsearch' in datasource_info['type']:
-        #
-        #     # assumption timedelta not more than one day (23:59:59)
-        #     assert timewindow < 86400
-        #
-        #     # create list of elasticsearch indices for today and 'today - timewindow'
-        #     delta = time.strftime("%Y.%m.%d", time.localtime(time.time() - timewindow))
-        #     index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]')
-        #     elastic_indices_reserve = (index_templ + today, index_templ + delta)
-        #     elastic_indices = [index for index in set(elastic_indices_reserve)]
-        #
-        #     print("Elasticsearch checker is not implemented yet")
-            # print(datasource_id, elastic_indices, meta_dash.target_json)
+        if 'elasticsearch' in datasource_info['type']:
+            # assumption timedelta not more than one day (23:59:59)
+            assert timewindow < 86400
+
+            # create list of elasticsearch indices for today and 'today - timewindow'
+            delta = time.strftime("%Y.%m.%d", time.localtime(time.time() - timewindow))
+            index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]')
+            elastic_indices_reserve = (index_templ + today, index_templ + delta)
+            elastic_indices = [index for index in set(elastic_indices_reserve)]
+
+            print("Elasticsearch checker is not implemented yet")
 
             # it doesn't work now
             # graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
 
         # influxdb flow
-        # if 'influxdb' in datasource_info['type']:
-        #     # insert variable timewindow from graph title instead of 30m
-        #     prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', prefix_extract(meta_dash.target_json))
-        #     # GROUP BY replacement
-        #     prefix = re.sub(r'\$\S*interval', '30s', prefix)
-        #
-        #     metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
-        #
-        #     no_data = 0
-        #     for query in influx_checker(metric_data):
-        #         if 'NO DATA' in query:
-        #             no_data += 1
-        #
-        #     # Seems like that there is only one query per graph for influxdb
-        #     if no_data == len(influx_checker(metric_data)):
-        #         graf_inst.create_annotation(dash_id_info.id,
-        #                                     meta_dash.panel_id,
-        #                                     ref_id(meta_dash.target_json),
-        #                                     timewindow)
-        #         print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
-        #               format(dashboard=dash_id_info.name, panel=meta_dash.title))
+        if 'influxdb' in datasource_info['type']:
+            # insert variable timewindow from graph title instead of 30m
+            prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', prefix_extract(meta_dash.target_json))
+            # GROUP BY replacement
+            prefix = re.sub(r'\$\S*interval', '30s', prefix)
+
+            metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
+
+            no_data = 0
+            for query in influx_checker(metric_data):
+                if 'NO DATA' in query:
+                    no_data += 1
+
+            # Seems like that there is only one query per graph for influxdb
+            if no_data == len(influx_checker(metric_data)):
+                graf_inst.create_annotation(dash_id_info.id,
+                                            meta_dash.panel_id,
+                                            ref_id(meta_dash.target_json),
+                                            timewindow)
+                print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+                      format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
