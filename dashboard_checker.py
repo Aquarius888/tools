@@ -169,6 +169,9 @@ def influx_checker(response):
 
 
 class GrafanaMaker:
+    """
+    Grafana API wrapper
+    """
 
     def __init__(self, url_api, proxy, headers):
         self.url_api = url_api
@@ -183,27 +186,67 @@ class GrafanaMaker:
 
     def get_uid(self, name_dash):
         """
-        Function requests about dashboard info by name of it
+        Make a request about dashboard info by name
         :param name_dash: Grafana dashboard's general name
         :return: tuple (dashboards id, dashboards uid)
         """
-        composed_url = '{0}/search?query={1}'.format(self.url_api, name_dash)
+        composed_url = '{base}/search?query={dash}'.format(
+            base=self.url_api,
+            dash=name_dash
+        )
         response = self.session.get(composed_url)
         return response.json()[0]['id'], response.json()[0]['uid']
 
     def get_panels_info(self, uid):
-        composed_url = '{0}/dashboards/uid/{1}'.format(self.url_api, uid)
+        """
+        Make a request about dashboard panels
+        :param uid: panel uid
+        :return: json with panel info
+        """
+        composed_url = '{base}/dashboards/uid/{uid}'.format(
+            base=self.url_api,
+            uid=uid
+        )
         response = self.session.get(composed_url)
         panels = response.json()['dashboard']['panels']
         return panels
 
     def datasource(self, datasource_name):
-        composed_url = '{0}/datasources/name/{1}'.format(self.url_api, datasource_name)
+        """
+        Get a data source info by name
+        :param datasource_name: name of datasource
+        :return: json with id, name, url and etc of datasource
+        """
+        composed_url = '{base}/datasources/name/{name}'.format(
+            base=self.url_api,
+            name=datasource_name
+        )
         response = self.session.get(composed_url)
         return response.json()
 
+    def datasource_by_id(self, datasource_id):
+        """
+        Get a data source info by id
+        :param datasource_name: id of datasource
+        :return: json with id, name, url and etc of datasource
+        """
+        composed_url = '{base}/datasources/{id}'.format(
+            base=self.url_api,
+            id=datasource_id
+        )
+        response = self.session.get(composed_url)
+        return  response.json()
+
     def create_annotation(self, dash_id, panel_id, ref_id, timewindow):
-        composed_url = '{0}/annotations'.format(self.url_api)
+        """
+        Create an annotation for panel with tag and description
+        :param dash_id: id of dashboard
+        :param panel_id: id of panel
+        :param ref_id: letter of Grafana query
+        :param timewindow: checked timewindow
+        :return: just reference (json) that an annotation has been created
+        """
+        composed_url = '{base}/annotations'.format(base=self.url_api)
         payload = {"dashboardId": dash_id,
                    "panelId": panel_id,
                    "time": current_timestamp,
@@ -216,6 +259,12 @@ class GrafanaMaker:
         return response.text
 
     def graphite_query(self, prefix, datasource_id):
+        """
+        Make a request to Graphite via Grafana
+        :param prefix: metric query (or target) in graphite format
+        :param datasource_id: id of datasource
+        :return: json with data about requested metric
+        """
         request = {
             'target': prefix,
             'format': 'json',
@@ -230,6 +279,13 @@ class GrafanaMaker:
         return response.json()
 
     def influxdb_query(self, prefix, database, datasource_id):
+        """
+        Make a request to InfluxDB via Grafana
+        :param prefix: metric query in InfluxDB format
+        :param database: influxbd database name
+        :param datasource_id: id of datasource
+        :return: json with data about requested metric
+        """
         request = {
             'q': prefix,
             'db': database,
@@ -241,6 +297,7 @@ class GrafanaMaker:
             params=request)
         return response.json()
 
+    # TODO: review with elasticsearch module
     def elastic_query(self, indices, timewindow, query, datasource_id):
 
         gte = int(time.time() - timewindow*1000)
@@ -278,15 +335,14 @@ class GrafanaMaker:
                  {"analyze_wildcard": True,
                   "query": elk_req}}]}}, "aggs": {}}
         req_body['aggs'].update(substr)
-        # print(json.dumps(request, indent=4))
+        request = json.dumps(req_head) + '\n' + json.dumps(req_body) + '\n'
         response = self.session.post('{base}/datasources/proxy/{datasource_id}/_msearch'.format(
             base=self.url_api,
             datasource_id=datasource_id),
-            data=req_head,
-            json=req_body)
-
+            data=request)
         print(response.text)
 
+    # TODO: review with elasticsearch module
     def _aggs_compose(self, aggs, bucket_aggs, gte, lte):
         aggs = {}
         while bucket_aggs:
@@ -295,8 +351,13 @@ class GrafanaMaker:
             if bucket['field'] == '@timestamp':
                 terms = {}
                 terms.update(bucket['settings'])
+                if 'order' and "orderBy" in terms:
+                    terms['order'] = {terms.get("orderBy"): terms.get("order")}
+                    del terms["orderBy"]
+                if 'trimEdges' in terms:
+                    del terms['trimEdges']
                 terms['field'] = bucket['field']
-                terms["extended_bounds"] = {"min":gte,"max":lte}
+                terms["extended_bounds"] = {"min": gte, "max": lte}
                 terms["format"] = "epoch_second"
                 aggs = {bucket['id']: {bucket['type']: terms}}
                 aggs["aggs"] = self._aggs_compose(aggs, bucket_aggs, gte, lte)
@@ -304,6 +365,11 @@ class GrafanaMaker:
             else:
                 terms = {}
                 terms.update(bucket['settings'])
+                if 'order' and "orderBy" in terms:
+                    terms['order'] = {terms.get("orderBy"): terms.get("order")}
+                    del terms["orderBy"]
+                if 'trimEdges' in terms:
+                    del terms['trimEdges']
                 terms['field'] = bucket['field']
                 aggs = {bucket['id']: {bucket['type']: terms}}
                 aggs["aggs"] = self._aggs_compose(aggs, bucket_aggs, gte, lte)
@@ -334,6 +400,7 @@ id_info_list = [Id_dash(dash,
 
 for dash_id_info in id_info_list:
     print('Dashboard \"{name}\" is on checking now'.format(name=dash_id_info.name))
+    print('-------------------------------------------------')
 
     for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
         # convert relevant time in title if it exists
@@ -369,6 +436,7 @@ for dash_id_info in id_info_list:
                       format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
         # TODO: implement a flow when elasticsearch as datasource
+        # TODO: review python modules for requesting elastic (elasticsearch-dsl ?)
         if 'elasticsearch' in datasource_info['type']:
 
             # assumption timedelta not more than one day (23:59:59)
@@ -381,9 +449,10 @@ for dash_id_info in id_info_list:
             elastic_indices = [index for index in set(elastic_indices_reserve)]
 
             print("Elasticsearch checker is not implemented yet")
+            # print(datasource_id, elastic_indices, meta_dash.target_json)
 
             # it doesn't work now
-            #graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
+            # graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
 
         # influxdb flow
         if 'influxdb' in datasource_info['type']:
