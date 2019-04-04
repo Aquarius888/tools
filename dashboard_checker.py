@@ -1,4 +1,5 @@
 import requests
+from elasticsearch import Elasticsearch
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
@@ -125,50 +126,44 @@ def prefix_extract(target_json):
     return prfx[0]
 
 
-def graphite_checker(response):
+def elastic_query_format(query_str):
     """
-    Checks a request about data existential
-    :param response: graphite data (in json) with information about query for timewindow
-    :return: list of tuple with note about data existential
+
+    :param query_str:
+    :return:
     """
-    data_lst = []
-    for target in range(len(response)):
-        datapoints = response[target]['datapoints']
-        pointer = 0
-        for data_p in datapoints:
-            if data_p[0] is not None:
-                pointer += 1
-        if pointer == 0:
-            data_lst.append((response[target]['target'], 'NO DATA'))
-        else:
-            data_lst.append((response[target]['target'], 'Checked'))
-    return data_lst
+    list_request = []
+    querys = query_str.split('AND')
+    for qr in querys:
+        query_list = qr.split(':')
+        list_request.append({'match': {query_list[0].strip(): query_list[1].strip()}})
+    return list_request
 
 
-def elastic_checker(response):
+def elastic_request(elk_url, index_tmpl, query, timewindow):
+    """
+    Makes a search query to elasticsearch
+    :param elk_url: complete HTTP URL
+    :param index_tmpl: template of elasticsearch index
+    :param query: composed elasticsearch query, dictionary
+    :param timewindow: checked timewindow
+    :return:
+    """
+    gte = int(time.time() - timewindow * 1000)
+    lte = int(time.time())
+
+    client = Elasticsearch(hosts=[elk_url], timeout=60)
+    assert client.ping()
+
+    body = {'query': {'bool': {'filter': {'range': {'@timestamp': {"gte": gte, "lte": lte}}}, 'must': query}}}
+    response = client.search(index=index_tmpl, body=body)
+
+    return response['hits']['hits']
+
+
+# TODO: implement checking of data from elasticsearch
+def elastic_checker():
     pass
-
-
-def influx_checker(response):
-    """
-    Checks a request about data existential
-    :param response: influxdb data (in json) with information about query for timewindow
-    :return: list of tuple with note about data existential
-    """
-    data_lst = []
-    series = response['results'][0]['series'][0]
-
-    datapoints = series['values']
-    pointer = 0
-    for data_p in datapoints:
-        if data_p[1] is not None:
-            pointer += 1
-    if pointer == 0:
-        data_lst.append((series['name'], 'NO DATA'))
-    else:
-        data_lst.append((series['name'], 'Checked'))
-
-    return data_lst
 
 
 class GrafanaMaker:
@@ -238,7 +233,7 @@ class GrafanaMaker:
             id=datasource_id
         )
         response = self.session.get(composed_url)
-        return response.json()
+        return  response.json()
 
     def create_annotation(self, dash_id, panel_id, ref_id, timewindow):
         """
@@ -281,6 +276,26 @@ class GrafanaMaker:
             params=request)
         return response.json()
 
+    @staticmethod
+    def graphite_checker(response):
+        """
+        Checks a request about data presence
+        :param response: graphite data (in json) with information about query for timewindow
+        :return: list of tuple with note about data presence
+        """
+        data_lst = []
+        for target in range(len(response)):
+            datapoints = response[target]['datapoints']
+            counter = 0
+            for data_p in datapoints:
+                if data_p[0] is not None:
+                    counter += 1
+            if counter == 0:
+                data_lst.append((response[target]['target'], 'NO DATA'))
+            else:
+                data_lst.append((response[target]['target'], 'Checked'))
+        return data_lst
+
     def influxdb_query(self, prefix, database, datasource_id):
         """
         Make a request to InfluxDB via Grafana
@@ -300,83 +315,27 @@ class GrafanaMaker:
             params=request)
         return response.json()
 
-    # TODO: review with elasticsearch module
-    def elastic_query(self, indices, timewindow, query, datasource_id):
+    @staticmethod
+    def influx_checker(response):
+        """
+        Checks a request about data presence
+        :param response: influxdb data (in json) with information about query for timewindow
+        :return: list of tuple with note about data presence
+        """
+        data_lst = []
+        series = response['results'][0]['series'][0]
 
-        gte = int(time.time() - timewindow * 1000)
-        lte = int(time.time())
+        datapoints = series['values']
+        counter = 0
+        for data_p in datapoints:
+            if data_p[1] is not None:
+                counter += 1
+        if counter == 0:
+            data_lst.append((series['name'], 'NO DATA'))
+        else:
+            data_lst.append((series['name'], 'Checked'))
 
-        req_head = {
-            "search_type": "query_then_fetch",
-            "ignore_unavailable": True,
-            "index": indices
-        }
-
-        bucket_aggs = pretty_search(query, 'bucketAggs')[0]
-        elk_req = pretty_search(query, 'query')[0]
-        aggs = {}
-        bucket_aggs.reverse()
-
-        substr = self._aggs_compose(aggs, bucket_aggs, gte, lte)
-
-        req_body = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [{
-                        "range":
-                            {
-                                "@timestamp":
-                                    {
-                                        "gte": gte,
-                                        "lte": lte,
-                                        "format": "epoch_second"
-                                    }
-                            }
-                    },
-                        {"query_string":
-                             {"analyze_wildcard": True,
-                              "query": elk_req}}]}}, "aggs": {}}
-        req_body['aggs'].update(substr)
-        request = json.dumps(req_head) + '\n' + json.dumps(req_body) + '\n'
-        response = self.session.post('{base}/datasources/proxy/{datasource_id}/_msearch'.format(
-            base=self.url_api,
-            datasource_id=datasource_id),
-            data=request)
-        print(response.text)
-
-    # TODO: review with elasticsearch module
-    def _aggs_compose(self, aggs, bucket_aggs, gte, lte):
-        aggs = {}
-        while bucket_aggs:
-            bucket = bucket_aggs.pop()
-
-            if bucket['field'] == '@timestamp':
-                terms = {}
-                terms.update(bucket['settings'])
-                if 'order' and "orderBy" in terms:
-                    terms['order'] = {terms.get("orderBy"): terms.get("order")}
-                    del terms["orderBy"]
-                if 'trimEdges' in terms:
-                    del terms['trimEdges']
-                terms['field'] = bucket['field']
-                terms["extended_bounds"] = {"min": gte, "max": lte}
-                terms["format"] = "epoch_second"
-                aggs = {bucket['id']: {bucket['type']: terms}}
-                aggs["aggs"] = self._aggs_compose(aggs, bucket_aggs, gte, lte)
-
-            else:
-                terms = {}
-                terms.update(bucket['settings'])
-                if 'order' and "orderBy" in terms:
-                    terms['order'] = {terms.get("orderBy"): terms.get("order")}
-                    del terms["orderBy"]
-                if 'trimEdges' in terms:
-                    del terms['trimEdges']
-                terms['field'] = bucket['field']
-                aggs = {bucket['id']: {bucket['type']: terms}}
-                aggs["aggs"] = self._aggs_compose(aggs, bucket_aggs, gte, lte)
-        return aggs
+        return data_lst
 
 
 # default timewindow in sec
@@ -384,7 +343,7 @@ timewindow = 14400
 # matching time prefix and seconds
 timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
 # current time in ms
-current_timestamp = int(time.time() * 1000)
+current_timestamp = int(time.time()*1000)
 today = time.strftime("%Y.%m.%d", time.localtime())
 ##################################################################################
 
@@ -427,11 +386,11 @@ for dash_id_info in id_info_list:
             metric_data = graf_inst.graphite_query(prefix, datasource_id)
 
             no_data = 0
-            for query in graphite_checker(metric_data):
+            for query in graf_inst.graphite_checker(metric_data):
                 if 'NO DATA' in query:
                     no_data += 1
 
-            if no_data == len(graphite_checker(metric_data)):
+            if no_data == len(graf_inst.graphite_checker(metric_data)):
                 graf_inst.create_annotation(dash_id_info.id,
                                             meta_dash.panel_id,
                                             ref_id(meta_dash.target_json),
@@ -439,22 +398,16 @@ for dash_id_info in id_info_list:
                 print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
                       format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
-        # TODO: implement a flow when elasticsearch as datasource
-        # TODO: review python modules for requesting elastic (elasticsearch-dsl ?)
+        # TODO: finish implementation, add creation annatation for elasticsearch flow
         if 'elasticsearch' in datasource_info['type']:
-            # assumption timedelta not more than one day (23:59:59)
-            assert timewindow < 86400
-
-            # create list of elasticsearch indices for today and 'today - timewindow'
-            delta = time.strftime("%Y.%m.%d", time.localtime(time.time() - timewindow))
-            index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]')
-            elastic_indices_reserve = (index_templ + today, index_templ + delta)
-            elastic_indices = [index for index in set(elastic_indices_reserve)]
-
-            print("Elasticsearch checker is not implemented yet")
-
-            # it doesn't work now
-            # graf_inst.elastic_query(elastic_indices, timewindow, meta_dash.target_json, datasource_id)
+            # derive elasticsearch url
+            datasource_url = datasource_info['url']
+            # derive elasticsearch index and convert to template
+            index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]') + '*'
+            # derive elasticsearch query
+            elastic_query = pretty_search(meta_dash.target_json, 'query')[0]
+            # debug print
+            print(datasource_url, index_templ, elastic_query_format(elastic_query), timewindow)
 
         # influxdb flow
         if 'influxdb' in datasource_info['type']:
@@ -466,12 +419,12 @@ for dash_id_info in id_info_list:
             metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
 
             no_data = 0
-            for query in influx_checker(metric_data):
+            for query in graf_inst.influx_checker(metric_data):
                 if 'NO DATA' in query:
                     no_data += 1
 
             # Seems like that there is only one query per graph for influxdb
-            if no_data == len(influx_checker(metric_data)):
+            if no_data == len(graf_inst.influx_checker(metric_data)):
                 graf_inst.create_annotation(dash_id_info.id,
                                             meta_dash.panel_id,
                                             ref_id(meta_dash.target_json),
