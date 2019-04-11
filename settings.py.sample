@@ -10,3 +10,6 @@ default_datasource_name = 'graphiterep'
 
 # list of dashboards for checking
 dash_list = ['Netflix', 'Netflix Copy']
+
+# proxy
+proxy = {'socks5h': 'http://127.0.0.1:8800'}
