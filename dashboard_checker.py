@@ -1,5 +1,8 @@
+# TODO: add logging
+# TODO: add catcher of exceptions
+
 import requests
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, RequestsHttpConnection, exceptions
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
@@ -7,6 +10,7 @@ import re
 import time
 import json
 from collections import namedtuple
+
 import settings
 
 
@@ -51,18 +55,20 @@ def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
 
 
 # TODO: review, replace on regex
-def prefix_format(prefix):
+def graphite_prefix_format(input):
     """
-    Parses input, extract prefix (query) from brackets and separate not needed symbols
-    :param prefix: grafana prefix (query) with grafana functions
+    Parse input, extract prefix (query) from brackets and separate not needed symbols
+    :param input: grafana prefix (query) with grafana functions
     :return: clear prefix
     """
-    # variable pattern
-    var_pattern = '\$\w+'
-    prefix = re.sub(var_pattern, '*', prefix)
+    # grafana variable pattern
+    var_pattern = r'\$\w+'
+    prefix = re.sub(var_pattern, '*', input)
+
     clear_prefix = prefix.split('(')[prefix.count('(')].split(')')[0]
     if ',' in clear_prefix:
         clear_prefix = clear_prefix.split(',')[0]
+
     return clear_prefix
 
 
@@ -128,41 +134,74 @@ def prefix_extract(target_json):
 
 def elastic_query_format(query_str):
     """
-
-    :param query_str:
-    :return:
+    Get input, parse it, clean special symbols, compose list of clean query
+    :param query_str: input, dirty string with query
+    :return: list of clean query
     """
+    meta_symbols = r'[?*+]'
+    range_symbols = r'\[(\S*)\sTO\s(\S*)\]'
     list_request = []
-    querys = query_str.split('AND')
-    for qr in querys:
-        query_list = qr.split(':')
-        list_request.append({'match': {query_list[0].strip(): query_list[1].strip()}})
+    queries = query_str.split('AND')
+    for qr in queries:
+        # check that elasticsearch query contains special symbols
+        if re.search(meta_symbols, qr):
+            continue
+
+        key, value = qr.split(':')
+
+        # range handler
+        if re.search(range_symbols, qr):
+            resp = re.search(range_symbols, qr)
+            list_request.append({'range': {key.strip(): {'gte': int(resp.group(1)), 'lte': int(resp.group(2))}}})
+            continue
+
+        # remove double quotes around value
+        if re.search(r'\"', value):
+            value = value.strip('"')
+        list_request.append({'match': {key.strip(): value.strip()}})
     return list_request
 
 
-def elastic_request(elk_url, index_tmpl, query, timewindow):
+def elastic_request(elk_url, index_tmpl, query, timewindow, proxy=''):
     """
-    Makes a search query to elasticsearch
-    :param elk_url: complete HTTP URL
-    :param index_tmpl: template of elasticsearch index
-    :param query: composed elasticsearch query, dictionary
-    :param timewindow: checked timewindow
+    Make a request to Elasticsearch
+    :param elk_url:
+    :param index_tmpl:
+    :param query:
+    :param timewindow: time window in seconds
     :return:
     """
-    gte = int(time.time() - timewindow * 1000)
-    lte = int(time.time())
 
-    client = Elasticsearch(hosts=[elk_url], timeout=60)
-    assert client.ping()
+    gte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()-timewindow))
+    lte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()))
 
-    body = {'query': {'bool': {'filter': {'range': {'@timestamp': {"gte": gte, "lte": lte}}}, 'must': query}}}
-    response = client.search(index=index_tmpl, body=body)
+    # list of rules should be extended if it is necessary
+    if '9200' in elk_url:
+        elk_url = elk_url.replace('9200', '80/elasticsearch')
+    if 'elasticsearch-odh-ecx' in elk_url:
+        elk_url = 'http://172.23.29.161:80/elasticsearch'
+    if 'kibana-cdnrep' in elk_url:
+        elk_url = 'http://kibana-cdnrep:80/elasticsearch'
 
-    return response['hits']['hits']
+    try:
+        client = Elasticsearch(hosts=[elk_url],
+                               connection_class=RequestsHttpConnection,
+                               proxies=proxy,
+                               timeout=120)
+        client.ping()
+        body = {'query': {'bool': {'filter': {'range': {'@timestamp': {"gte": gte, "lte": lte}}}, 'must': query}}}
+        response = client.search(index=index_tmpl, body=body)
+        return response['hits']['hits']
+    except exceptions.ConnectionError as er:
+        return er
 
 
-# TODO: implement checking of data from elasticsearch
-def elastic_checker():
+# TODO: add the catcher to functions
+def catch_http_error(response):
+    try:
+        response.raise_for_status()
+    except response.exceptions.HTTPError as er:
+        return "Error: {error}".format(error=er)
     pass
 
 
@@ -233,7 +272,7 @@ class GrafanaMaker:
             id=datasource_id
         )
         response = self.session.get(composed_url)
-        return  response.json()
+        return response.json()
 
     def create_annotation(self, dash_id, panel_id, ref_id, timewindow):
         """
@@ -270,11 +309,8 @@ class GrafanaMaker:
             'until': 'now',
             'maxDataPoints': 100
         }
-        response = self.session.post('{base}/datasources/proxy/{datasource_id}/render'.format(
-            base=self.url_api,
-            datasource_id=datasource_id),
-            params=request)
-        return response.json()
+
+        return self._get_proxy_call(datasource_id, 'render', request)
 
     @staticmethod
     def graphite_checker(response):
@@ -309,11 +345,8 @@ class GrafanaMaker:
             'db': database,
             'epoch': 'ms'
         }
-        response = self.session.post('{base}/datasources/proxy/{datasource_id}/query'.format(
-            base=self.url_api,
-            datasource_id=datasource_id),
-            params=request)
-        return response.json()
+
+        return self._get_proxy_call(datasource_id, 'query', request)
 
     @staticmethod
     def influx_checker(response):
@@ -337,20 +370,38 @@ class GrafanaMaker:
 
         return data_lst
 
+    def _get_proxy_call(self, datasource_id, query, request):
+        """
+        Make Grafana API proxy call
+        :param datasource_id: id of datasource
+        :param query: special word
+        :param request: request
+        :return: response in json
+        """
+        response = self.session.post('{base}/datasources/proxy/{datasource_id}/{query}'.format(
+            base=self.url_api,
+            datasource_id=datasource_id,
+            query=query),
+            params=request)
+
+        try:
+            response.raise_for_status()
+        except request.exceptions.HTTPError as er:
+            return "Error: {error}".format(error=er)
+
+        return response.json()
+
 
 # default timewindow in sec
-timewindow = 14400
+TIMEWINDOW = 14400
 # matching time prefix and seconds
 timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
 # current time in ms
 current_timestamp = int(time.time()*1000)
-today = time.strftime("%Y.%m.%d", time.localtime())
-##################################################################################
 
 # datastructures
 Meta_dash = namedtuple('Meta_dash', ['panel_id', 'title', 'datasource', 'target_json'])
 Id_dash = namedtuple('Id_dash', ['name', 'id', 'uid'])
-##################################################################################
 
 # create object - instance for work with Grafana
 graf_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers)
@@ -371,18 +422,21 @@ for dash_id_info in id_info_list:
             timestring = reg.group().strip('( )')
             timewindow = int(re.search(r'\d+', timestring).group()) * \
                          timeprefix.get(re.search(r'\D', timestring).group())
+        else:
+            timewindow = TIMEWINDOW
 
+        # handler of Grafana datasource name
         if 'default' in meta_dash.datasource:
             datasource_info = graf_inst.datasource(settings.default_datasource_name)
         else:
             datasource_info = graf_inst.datasource(meta_dash.datasource)
         datasource_id = datasource_info['id']
 
-        # flow for Graphite
+        # Graphite flow
         if 'graphite' in datasource_info['type']:
 
             # get clear string of prefix
-            prefix = prefix_format(prefix_extract(meta_dash.target_json))
+            prefix = graphite_prefix_format(prefix_extract(meta_dash.target_json))
             metric_data = graf_inst.graphite_query(prefix, datasource_id)
 
             no_data = 0
@@ -398,24 +452,35 @@ for dash_id_info in id_info_list:
                 print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
                       format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
-        # TODO: finish implementation, add creation annatation for elasticsearch flow
+        # Elasticsearch flow
         if 'elasticsearch' in datasource_info['type']:
             # derive elasticsearch url
             datasource_url = datasource_info['url']
             # derive elasticsearch index and convert to template
-            index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]') + '*'
+            index_templ = datasource_info['database']
+            if re.search(r'\[\S+\]', datasource_info['database']):
+                index_templ = re.search(r'\[\S+\]', datasource_info['database']).group().strip('[]') + '*'
+
             # derive elasticsearch query
             elastic_query = pretty_search(meta_dash.target_json, 'query')[0]
-            # debug print
-            print(datasource_url, index_templ, elastic_query_format(elastic_query), timewindow)
+            query = elastic_query_format(elastic_query)
 
-        # influxdb flow
+            elk_response = elastic_request(datasource_url, index_templ, query, timewindow, settings.proxy)
+
+            if not elk_response:
+                graf_inst.create_annotation(dash_id_info.id,
+                                            meta_dash.panel_id,
+                                            ref_id(meta_dash.target_json),
+                                            timewindow)
+                print("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+                      format(dashboard=dash_id_info.name, panel=meta_dash.title))
+
+        # InfluxDB flow
         if 'influxdb' in datasource_info['type']:
-            # insert variable timewindow from graph title instead of 30m
-            prefix = re.sub(r'\$\S*timeFilter', 'time >= now() - 30m', prefix_extract(meta_dash.target_json))
+            timefilter = 'time >= now() - {timewindow}m'.format(timewindow=str(int(timewindow/60)))
+            prefix = re.sub(r'\$\S*timeFilter', timefilter, prefix_extract(meta_dash.target_json))
             # GROUP BY replacement
             prefix = re.sub(r'\$\S*interval', '30s', prefix)
-
             metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
 
             no_data = 0
