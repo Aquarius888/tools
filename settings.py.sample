@@ -1,5 +1,5 @@
 # Grafana token
-token = "eyJrIjoiMjNtRmlyM3FDU0JVUDhJV1hQcmMwcU40SDNsNkRTYUIiLCJuIjoidHN0Y2hlY2tlciIsImlkIjoxfQ=="
+token = ""
 
 headers = {"Authorization": "Bearer {}".format(token), 'Accept': 'application/json', 'Content-Type': 'application/json'}
 url_api = 'http://grafana-staging/api'
@@ -13,3 +13,6 @@ dash_list = ['Netflix', 'Netflix Copy']
 
 # proxy
 proxy = {'socks5h': 'http://127.0.0.1:8800'}
+
+# logging level
+log_level = 'DEBUG'
