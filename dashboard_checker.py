@@ -1,4 +1,5 @@
-# TODO: implement cleaner of old or unexpected annotations
+# TODO: add command line keys, arguments handler (fire ?)
+# TODO: dry run
 # TODO: add handler of exceptions
 # TODO: review Grafana math functions, for ex. 'asPercent'
 
@@ -83,7 +84,7 @@ def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
 def graphite_prefix_format(inpt):
     """
     Parse input, extract prefix (query) from brackets and separate not needed symbols
-    :param input: grafana prefix (query) with grafana functions
+    :param inpt: grafana prefix (query) with grafana functions
     :return: clear prefix
     """
     # grafana variable pattern
@@ -113,7 +114,8 @@ def panel_info(panels_info):
         try:
             datasource = panel['datasource']
         except KeyError:
-            logger.debug("Datasource for {} doesn't exist, doesn't define or Mixed type".format(panel['title']))
+            logger.debug("Datasource for {} doesn't exist, doesn't define or Mixed type, will be assigned as 'default'".
+                         format(panel['title']))
             # Seems like it is a bug in Grafana
             datasource = 'default'
             # continue
@@ -122,13 +124,13 @@ def panel_info(panels_info):
             datasource is not None
         except TypeError:
             logger.debug(
-                "Datasource for {} is None. It was rejected and should be investigated".format(panel['title']))
+                "Datasource for {} is None. It was rejected and should be investigated later".format(panel['title']))
             continue
 
         try:
             'Mixed' not in datasource
         except ValueError:
-            logger.debug("Datasource for {} is Mixed. Try default".format(panel['title']))
+            logger.debug("Datasource for {} is Mixed. Will be assigned as 'default'".format(panel['title']))
             datasource = 'default'
 
         logging.debug(panel['title'], datasource)
@@ -168,11 +170,11 @@ def ref_id(target_json):
     return pretty_search(target_json, 'refId')[0]
 
 
-def prefix_extract(target_json):
-    prfx = pretty_search(target_json, 'query')
-    if not prfx:
-        prfx = pretty_search(target_json, 'target')
-    return prfx[0]
+# def prefix_extract(target_json):
+#     prfx = pretty_search(target_json, 'query')
+#     if not prfx:
+#         prfx = pretty_search(target_json, 'target')
+#     return prfx[0]
 
 
 def elastic_query_format(query_str):
@@ -337,12 +339,31 @@ class GrafanaMaker:
                    "isRegion": False,
                    "timeEnd": 0,
                    "tags": ["NO DATA"],
-                   "text": "Annotation has been added automatically by dashboard-checker (DataOps team tool)"}
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        response = self.session.post(composed_url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+                   "text": "Query {} \n Annotation's been added automatically by dashboard-checker (DataOps team tool)".
+                       format(ref_id)}
+        # headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        response = self.session.post(composed_url, data=json.dumps(payload).encode('utf-8'))
         return response.text
 
-    def graphite_query(self, prefix, datasource_id):
+    def find_annotation(self, gte, lte, dash_id, tag='NO DATA', limit=100):
+        composed_url = '{base}/annotations?from={gte}&to={lte}&tags={tag}&limit={limit}&dashboardId={dash_id}'.format(
+            base=self.url_api,
+            gte=gte,
+            lte=lte,
+            tag=tag,
+            limit=limit,
+            dash_id=dash_id)
+        response = self.session.get(composed_url)
+        return response.json()
+
+    def delete_annotation(self, annot_id):
+        composed_url = '{base}/annotations/{id}'.format(
+            base=self.url_api,
+            id=annot_id)
+        response = self.session.delete(composed_url)
+        return response.json()
+
+    def graphite_query(self, prefix, datasource_id, timewindow):
         """
         Make a request to Graphite via Grafana
         :param prefix: metric query (or target) in graphite format
@@ -352,9 +373,9 @@ class GrafanaMaker:
         request = {
             'target': prefix,
             'format': 'json',
-            'from': '-1h',
+            'from': '-{timewindow}s'.format(timewindow=timewindow),
             'until': 'now',
-            'maxDataPoints': 100
+            'maxDataPoints': 1000
         }
 
         return self._get_proxy_call(datasource_id, 'render', request)
@@ -448,7 +469,17 @@ class GrafanaMaker:
 # default timewindow in sec
 TIMEWINDOW = 14400
 # matching time prefix and seconds
-timeprefix = {'d': 86400, 'h': 3600, 'm': 60, 's': 1}
+TIMEPREFIX = {'d': 86400,
+              'h': 3600,
+              'm': 60,
+              's': 1,
+              'per day': 86400,
+              'per hour': 3600,
+              'per min': 60,
+              'per minute': 60,
+              'daily': 86400,
+              'minute': 60,
+              'hourly': 3600}
 # current time in ms
 current_timestamp = int(time.time()*1000)
 
@@ -471,15 +502,35 @@ if __name__ == '__main__':
     for dash_id_info in id_info_list:
         logger.info('Dashboard \"{name}\" is on checking now'.format(name=dash_id_info.name))
 
+        # delete old annotations
+        annotation_list_id = [annot.get('id') for annot in graf_inst.find_annotation(current_timestamp - TIMEWINDOW * 1000,
+                                                                                     current_timestamp,
+                                                                                     dash_id_info.id)]
+        logger.debug(annotation_list_id)
+        for annot_id in annotation_list_id:
+            graf_inst.delete_annotation(annot_id)
+            logger.info("Annotation with id: {} has been deleted".format(annot_id))
+
+        # main flow: check data and set annotations
         for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
             logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
                   format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
             # convert relevant time in title if it exists
-            reg = re.search(r'\s\(\d+[dhms]\)', meta_dash.title)
-            if reg:
-                timestring = reg.group().strip('( )')
-                timewindow = int(re.search(r'\d+', timestring).group()) * \
-                             timeprefix.get(re.search(r'\D', timestring).group())
+            relevant = re.search(r'\s\((\d*[dhms]|daily|hourly|minute|abs|per day|per hour|per min\D*)\)',
+                                 meta_dash.title)
+
+            if relevant:
+                # 'abs' in title allows to skip checking for a panel
+                if 'abs' in relevant.group():
+                    logger.info("Panel \"{panel}\" is uncheckable by notation 'abs'".format(panel=meta_dash.title))
+                    continue
+
+                timestring = relevant.group(1)
+                if re.search(r'\d+', timestring):
+                    timewindow = int(re.search(r'\d*', timestring).group()) * TIMEPREFIX.get(
+                        re.search(r'\D', timestring).group())
+                else:
+                    timewindow = TIMEPREFIX.get(timestring)
             else:
                 timewindow = TIMEWINDOW
 
@@ -493,21 +544,23 @@ if __name__ == '__main__':
             # Graphite flow
             if 'graphite' in datasource_info['type']:
                 # get clear string of prefix
-                prefix = graphite_prefix_format(prefix_extract(meta_dash.target_json))
-                metric_data = graf_inst.graphite_query(prefix, datasource_id)
+                extract = pretty_search(meta_dash.target_json, 'target')
+                prefix = graphite_prefix_format(extract[0])
+                metric_data = graf_inst.graphite_query(prefix, datasource_id, timewindow)
 
                 no_data = 0
-                for query in graf_inst.graphite_checker(metric_data):
+                checked_list = graf_inst.graphite_checker(metric_data)
+                for query in checked_list:
                     if 'NO DATA' in query:
                         no_data += 1
 
-                # if no_data == len(graf_inst.graphite_checker(metric_data)):
-                #     graf_inst.create_annotation(dash_id_info.id,
-                #                                 meta_dash.panel_id,
-                #                                 ref_id(meta_dash.target_json),
-                #                                 timewindow)
-                #     logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
-                #           format(dashboard=dash_id_info.name, panel=meta_dash.title))
+                if no_data == len(checked_list):
+                    graf_inst.create_annotation(dash_id_info.id,
+                                                meta_dash.panel_id,
+                                                ref_id(meta_dash.target_json),
+                                                timewindow)
+                    logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+                          format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
             # Elasticsearch flow
             if 'elasticsearch' in datasource_info['type']:
@@ -523,20 +576,21 @@ if __name__ == '__main__':
                 query = elastic_query_format(elastic_query)
 
                 elk_response = elastic_request(datasource_url, index_templ, query, timewindow, settings.proxy)
-                # logger.debug(elk_response)
 
-                # if not elk_response:
-                #     graf_inst.create_annotation(dash_id_info.id,
-                #                                 meta_dash.panel_id,
-                #                                 ref_id(meta_dash.target_json),
-                #                                 timewindow)
-                #     logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
-                #           format(dashboard=dash_id_info.name, panel=meta_dash.title))
+                if not elk_response:
+                    graf_inst.create_annotation(dash_id_info.id,
+                                                meta_dash.panel_id,
+                                                ref_id(meta_dash.target_json),
+                                                timewindow)
+                    logger.debug("Elasticsearch query where there is no data".format(query))
+                    logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+                          format(dashboard=dash_id_info.name, panel=meta_dash.title))
 
             # InfluxDB flow
             if 'influxdb' in datasource_info['type']:
                 timefilter = 'time >= now() - {timewindow}m'.format(timewindow=str(int(timewindow/60)))
-                prefix = re.sub(r'\$\S*timeFilter', timefilter, prefix_extract(meta_dash.target_json))
+                extract = pretty_search(meta_dash.target_json, 'query')
+                prefix = re.sub(r'\$\S*timeFilter', timefilter, extract[0])
                 # GROUP BY replacement
                 prefix = re.sub(r'\$\S*interval', '30s', prefix)
                 metric_data = graf_inst.influxdb_query(prefix, datasource_info['database'], datasource_id)
@@ -546,12 +600,15 @@ if __name__ == '__main__':
                     if 'NO DATA' in query:
                         no_data += 1
 
-                # Seems like that there is only one query per graph for influxdb
-                # if no_data == len(graf_inst.influx_checker(metric_data)):
-                #     graf_inst.create_annotation(dash_id_info.id,
-                #                                 meta_dash.panel_id,
-                #                                 ref_id(meta_dash.target_json),
-                #                                 timewindow)
-                #     logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
-                #           format(dashboard=dash_id_info.name, panel=meta_dash.title))
+                if no_data == len(graf_inst.influx_checker(metric_data)):
+                    graf_inst.create_annotation(dash_id_info.id,
+                                                meta_dash.panel_id,
+                                                ref_id(meta_dash.target_json),
+                                                timewindow)
+                    logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
+                          format(dashboard=dash_id_info.name, panel=meta_dash.title))
+
+
+
+
 
