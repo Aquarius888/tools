@@ -1,18 +1,49 @@
-# Grafana token
+# Grafana admin (editor) token
 token = ""
 
+# application/x-ndjson
 headers = {"Authorization": "Bearer {}".format(token), 'Accept': 'application/json', 'Content-Type': 'application/json'}
-url_api = 'http://grafana-staging/api'
-proxy = {}
+# url_api = 'http://grafana-staging/api'
+url_api = 'http://grafana-production/api'
 
-default_datasource_url = 'http://graphite-islogs'
+
+# staging graphite datasource
+# default_datasource_url = 'http://graphite-islogs'
+# default_datasource_name = 'graphiterep'
+
+# prod graphite datasource
+default_datasource_url = 'http://graphite-vie'
 default_datasource_name = 'graphiterep'
 
-# list of dashboards for checking
-dash_list = ['Netflix', 'Netflix Copy']
+# list of dashboard names
+# STAGING
+# dash_list = ['Netflix', 'Netflix Copy']
+# PROD
+dash_list = ['HorizonGO-pl',
+             'cdn-ott-pl',
+             'dawn-cz',
+             'dawn-pl',
+             'fabrix-origins-managers-nl',
+             'helios',
+             'horizongo-all',
+             'horizon-de',
+             'horizongo-at',
+             'horizongo-ch',
+             'horizongo-cl',
+             'horizongo-de',
+             'horizongo-pr',
+             'horizongo-uk',
+             'horizongo360-be',
+             'horizongo360-ch',
+             'horizongo360-nl',
+             'nds-nl',
+             'noc-nl',
+             'oesp-prod',
+             'smartrec-nl',
+             'traxis-pl',
+             'vspp-nl']
 
-# proxy
-proxy = {'socks5h': 'http://127.0.0.1:8800'}
+proxy = {}
+# proxy = {'socks5h': 'http://127.0.0.1:8800'}
 
-# logging level
-log_level = 'DEBUG'
+log_level = 'INFO'
