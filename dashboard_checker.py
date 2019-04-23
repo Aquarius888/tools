@@ -7,7 +7,7 @@ in this case, adds an annotation on a panel.
 
 Usage:
 python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA')
-python3 dashboard_checker.py -c 86400 (deletes old annotation for last 24h (86400 secinds),
+python3 dashboard_checker.py -c 86400 (deletes old annotation for last 24h (86400 seconds),
                                        default time window and tag is 'NO DATA')
 python3 dashboard_checker.py -d graphite (goes through only graphite datasource panels,
                                        default time window and tag is 'NO DATA')
@@ -328,23 +328,6 @@ def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
     return search_result if search_result else None
 
 
-def graphite_prefix_format(inpt):
-    """
-    Parse input, extract prefix (query) from brackets and separate not needed symbols
-    :param inpt: grafana prefix (query) with grafana functions
-    :return: clear prefix
-    """
-    # grafana variable pattern
-    var_pattern = r'\$\w+'
-    prefix = re.sub(var_pattern, '*', inpt)
-
-    clear_prefix = prefix.split('(')[prefix.count('(')].split(')')[0]
-    if ',' in clear_prefix:
-        clear_prefix = clear_prefix.split(',')[0]
-
-    return clear_prefix
-
-
 def panel_info(panels_info):
     """
     Parse panel info and compose list of namedtuple with info for checked panels
@@ -411,7 +394,12 @@ def panel_info(panels_info):
 
 
 def ref_id(target_json):
-    return pretty_search(target_json, 'refId')[0]
+    # Ref id without a letter (a lot of queries on a panel)
+    try:
+        return pretty_search(target_json, 'refId')[0]
+    except TypeError:
+        logger.debug("A lot of quires on a panel, ref_id doesn't have a letter")
+        return 'One_more'
 
 
 def elastic_query_format(query_str):
@@ -429,7 +417,13 @@ def elastic_query_format(query_str):
         if re.search(meta_symbols, qr):
             continue
 
-        key, value, *_ = qr.split(':')
+        try:
+            key, value, *_ = qr.split(':')
+        except ValueError as err:
+            logger.debug("Elasticsearch query {qr} has been skipped because {err}".format(
+                qr=query_str,
+                err=err))
+            continue
 
         # range handler
         if re.search(range_symbols, qr):
@@ -502,15 +496,26 @@ def annotation_handler(time_window, dash_id, tag, test_mode=False):
 
 def graphite_flow(time_window, tag, test_mode=False):
     """
-    Derives graphite metric's path, gets list of metric's data for specified time window, initializes request
-    creates annotations if data is null
+    Derive graphite metric's path, get list of metric's data for specified time window, initialize request
+    create annotations if data is null
     :param time_window: time window for search annotations, in s
     :param tag: tag for annotations, type: string
     :param test_mode: test mode
     :return:
     """
-    extract = pretty_search(meta_dash.target_json, 'target')
-    prefix = graphite_prefix_format(extract[0])
+    extract = pretty_search(meta_dash.target_json, 'targetFull')
+    if extract is None or []:
+        extract = pretty_search(meta_dash.target_json, 'target')
+
+    prefix = extract[0]
+
+    # TODO: recursive extract complicated query (according to ref_id)
+    if '#' in prefix:
+        logger.debug("Dash: {dash}, panel: {panel}, query: {qr}. Complicated graphite query, will be skipped".format(
+            dash=dash_id_info.name,
+            panel=meta_dash.title,
+            qr=ref_id(meta_dash.target_json)))
+        pass
     metric_data = graf_inst.graphite_query(prefix, datasource_id, time_window)
 
     no_data = 0
@@ -525,10 +530,12 @@ def graphite_flow(time_window, tag, test_mode=False):
                                         meta_dash.panel_id,
                                         ref_id(meta_dash.target_json),
                                         [tag])
+            logger.debug(prefix)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_dash.title))
         else:
+            # Test mode is activated
             logger.info("No data state is found on dashboard \"{dashboard}\" panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_dash.title))
@@ -536,8 +543,8 @@ def graphite_flow(time_window, tag, test_mode=False):
 
 def elasticsearch_flow(time_window, tag, test_mode=False):
     """
-    Derives index and formats it to template (index-*), initializes request,
-    creates annotations if data is null
+    Derive index and format it to template (index-*), initialize request,
+    create annotations if data is null
     :param time_window: time window for search annotations, in s
     :param tag: tag for annotations, type: string
     :param test_mode: test mode
