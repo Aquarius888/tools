@@ -1,9 +1,6 @@
-# TODO: add handler of exceptions
-# TODO: review Grafana math functions, for ex. 'asPercent'
-
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
-in this case, adds an annotation on a panel.
+in this case, adds an annotation on a panel with a specified tag.
 
 Usage:
 python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA')
@@ -509,13 +506,12 @@ def graphite_flow(time_window, tag, test_mode=False):
 
     prefix = extract[0]
 
-    # TODO: recursive extract complicated query (according to ref_id)
     if '#' in prefix:
         logger.debug("Dash: {dash}, panel: {panel}, query: {qr}. Complicated graphite query, will be skipped".format(
             dash=dash_id_info.name,
             panel=meta_dash.title,
             qr=ref_id(meta_dash.target_json)))
-        pass
+        return
     metric_data = graf_inst.graphite_query(prefix, datasource_id, time_window)
 
     no_data = 0
