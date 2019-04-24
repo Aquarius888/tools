@@ -1,4 +1,4 @@
-# Dashboard checker
+# Grafana dashboard checker
 Python requirements:
 The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and requires following modules:
 - requests
@@ -7,7 +7,7 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 ## Usage with docker container
 1. git clone https://github.com/Aquarius888/tools.git
 2. Copy settings.py.sample as settings.py
-2.1. Fill gaps (token, dash_list and other fields (if it is required))
+<br/>2.1. Fill gaps (token, dash_list and other fields (if it is required))
 3. Copy to the directory /etc/hosts
 4. Build docker image (alpine, python3.6)
 <br/>\# docker build --network=host -t dash-checker:latest .
