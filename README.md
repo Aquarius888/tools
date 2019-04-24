@@ -12,7 +12,7 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 4. Build docker image (alpine, python3.6)
 <br/>\# docker build --network=host -t dash-checker:latest .
 5. Run container (see commands in Native usage section)
-<br/>\#  docker run --rm -v /vagrant/local/dash-checker:/checker --network=host dash-checker dashboard_checker.py -h
+<br/>\#  docker run --rm -v <git directory>:/checker --network=host dash-checker dashboard_checker.py -h
 
 
 ### Native usage:
