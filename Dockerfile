@@ -4,8 +4,6 @@ RUN mkdir /checker
 
 RUN pip3 install requests elasticsearch
 
-COPY hosts /checker
-RUN cat /checker/hosts > /etc/hosts
 COPY dashboard_checker.py /checker
 COPY settings.py /checker
 

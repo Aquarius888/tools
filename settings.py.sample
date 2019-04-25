@@ -3,15 +3,19 @@ token = ""
 
 # application/x-ndjson
 headers = {"Authorization": "Bearer {}".format(token), 'Accept': 'application/json', 'Content-Type': 'application/json'}
-# url_api = 'http://grafana-staging/api'
-url_api = 'http://grafana-production/api'
+
+# grafana STAGING
+# url_api = 'http://viepgrfpe12/api'
+
+# garafana PROD
+url_api = 'http://viepgrfpe13/api'
 
 
-# staging graphite datasource
+# STAGING graphite datasource
 # default_datasource_url = 'http://graphite-islogs'
 # default_datasource_name = 'graphiterep'
 
-# prod graphite datasource
+# PROD graphite datasource
 default_datasource_url = 'http://graphite-vie'
 default_datasource_name = 'graphiterep'
 
@@ -43,7 +47,7 @@ dash_list = ['HorizonGO-pl',
              'traxis-pl',
              'vspp-nl']
 
-proxy = {}
 # proxy = {'socks5h': 'http://127.0.0.1:8800'}
+proxy = {}
 
 log_level = 'INFO'

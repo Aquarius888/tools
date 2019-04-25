@@ -6,13 +6,14 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 
 ## Usage with docker container
 1. git clone https://github.com/Aquarius888/tools.git
-2. Copy settings.py.sample as settings.py
+2. Go to cloned directory ($ cd tools)
+3. Copy settings.py.sample as settings.py ($ cp settings.py.sample settings.py)
 <br/>2.1. Fill gaps (token, dash_list and other fields (if it is required))
-3. Copy to the directory /etc/hosts
 4. Build docker image (alpine, python3.6)
 <br/>\# docker build --network=host -t dash-checker:latest .
 5. Run container (see commands in Native usage section)
-<br/>\#  docker run --rm -v \<git directory>:/checker --network=host dash-checker dashboard_checker.py -h
+<br/>\#  docker run --rm -v $(pwd):/checker --network=host dash-checker dashboard_checker.py -h
+
 
 
 ### Native usage:
