@@ -1,6 +1,6 @@
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
-in this case, adds an annotation on a panel with a specified tag.
+in this case, adds an annotation on a panel.
 
 Usage:
 python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA')
@@ -27,7 +27,10 @@ from collections import namedtuple
 import logging
 from logging.handlers import RotatingFileHandler
 
-import settings
+try:
+    import settings
+except ImportError as err:
+    print("Make sure settings.py is in one directory with the tool. {err}".format(err=err))
 
 
 class GrafanaMaker:
@@ -63,19 +66,17 @@ class GrafanaMaker:
             logger.debug("Dashboard \"{}\" doesn't exist".format(name_dash))
             return None
 
-    def get_panels_info(self, uid):
+    def get_dashboard(self, uid):
         """
-        Make a request about dashboard panels
-        :param uid: panel uid
-        :return: json with panel info
+        Get dashboard's data
+        :param uid: dashboard uid
+        :return: json
         """
         composed_url = '{base}/dashboards/uid/{uid}'.format(
             base=self.url_api,
-            uid=uid
-        )
+            uid=uid)
         response = self.session.get(composed_url)
-        panels = response.json()['dashboard']['panels']
-        return panels
+        return response.json()['dashboard']
 
     def datasource(self, ds_name):
         """
@@ -332,7 +333,7 @@ def panel_info(panels_info):
     :return: list of namedtuples (id, title, datasource, target_json info)
     """
     meta_list = []
-
+    # panel
     for panel in panels_info:
         # Parser works ONLY for 'graph' type of panels
         if panel['type'] != 'graph':
@@ -410,7 +411,7 @@ def elastic_query_format(query_str):
     list_request = []
     queries = query_str.split('AND')
     for qr in queries:
-        # check that elasticsearch query contains special symbols
+        # check that elasticsearch query contains special symbols (like, wildcard)
         if re.search(meta_symbols, qr):
             continue
 
@@ -500,22 +501,44 @@ def graphite_flow(time_window, tag, test_mode=False):
     :param test_mode: test mode
     :return:
     """
+    no_data = 0
     extract = pretty_search(meta_dash.target_json, 'targetFull')
     if extract is None or []:
         extract = pretty_search(meta_dash.target_json, 'target')
 
     prefix = extract[0]
 
-    if '#' in prefix:
-        logger.debug("Dash: {dash}, panel: {panel}, query: {qr}. Complicated graphite query, will be skipped".format(
-            dash=dash_id_info.name,
-            panel=meta_dash.title,
-            qr=ref_id(meta_dash.target_json)))
-        return
-    metric_data = graf_inst.graphite_query(prefix, datasource_id, time_window)
+    # variable's handler
+    if '$' in prefix:
+        split_prefix = prefix.split('.')
+        for i in range(len(split_prefix)):
+            if '$' in split_prefix[i]:
+                split_prefix[i] = dashboard_vars.get(split_prefix[i].lstrip('$'))
+        try:
+            prefix = '.'.join(split_prefix)
+        except TypeError as err:
+            logger.debug('Wrong query?! Error: {} Check dashboard {}, panel {}, query {}'
+                         .format(err,
+                                 dash_id_info.name,
+                                 meta_dash.title,
+                                 ref_id(meta_dash.target_json)))
+            return None
 
-    no_data = 0
+    # regex's handler
+    if '{' and '}' in prefix:
+        # braces = r'\{([\w+|\w+\*],?){1,}\}'
+        braces = r'\{([\w+\*-_],?){1,}\}'
+        prefix_list = []
+        result = re.search(braces, prefix)
+        for value in result.group().strip('{}').split(','):
+            prefix_list.append(re.sub(braces, value, prefix))
+        # just check one prefix from the list, it's enough
+        if prefix_list:
+            prefix = prefix_list[0]
+
+    metric_data = graf_inst.graphite_query(prefix, datasource_id, time_window)
     checked_list = graf_inst.graphite_checker(metric_data)
+
     for query in checked_list:
         if 'NO DATA' in query:
             no_data += 1
@@ -526,7 +549,8 @@ def graphite_flow(time_window, tag, test_mode=False):
                                         meta_dash.panel_id,
                                         ref_id(meta_dash.target_json),
                                         [tag])
-            logger.debug(prefix)
+            # logger.debug(prefix)
+            # logger.debug(metric_data)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_dash.title))
@@ -712,8 +736,14 @@ if __name__ == '__main__':
 
         annotation_handler(args.clean, dash_id_info.id, args.tag, args.dry_run)
 
+        dash_data = graf_inst.get_dashboard(dash_id_info.uid)
+        # get dashboard variables
+        dashboard_vars = dict()
+        for variable in dash_data['templating']['list']:
+            dashboard_vars[variable.get('name')] = variable.get('query')
+
         # main flow: check data and set annotations
-        for meta_dash in panel_info(graf_inst.get_panels_info(dash_id_info.uid)):
+        for meta_dash in panel_info(dash_data['panels']):
 
             timewindow = relevant_time(meta_dash.title)
             if timewindow is None:

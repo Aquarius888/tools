@@ -2,7 +2,9 @@
 token = ""
 
 # application/x-ndjson
-headers = {"Authorization": "Bearer {}".format(token), 'Accept': 'application/json', 'Content-Type': 'application/json'}
+headers = {"Authorization": "Bearer {}".format(token),
+           'Accept': 'application/json',
+           'Content-Type': 'application/x-www-form-urlencoded'}
 
 # grafana STAGING
 # url_api = 'http://viepgrfpe12/api'

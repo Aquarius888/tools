@@ -12,7 +12,7 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 4. Build docker image (alpine, python3.6)
 <br/>\# docker build --network=host -t dash-checker:latest .
 5. Run container (see commands in Native usage section)
-<br/>\#  docker run -d -v `pwd`:/checker --network=host dash-checker kick_off "\* \*/2 \* \* \* python3 /checker/dashboard_checker.py -c 86400"
+<br/>\#  docker run -d -v `pwd`:/checker --network=host dash-checker kick_off "0 \*/2 \* \* \* python3 /checker/dashboard_checker.py -c 86400"
 - Pay attention: all spec symbols in crontab template (like *) must be escaped (\\)
 
 
