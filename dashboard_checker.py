@@ -24,8 +24,12 @@ import re
 import time
 import json
 from collections import namedtuple
+
 import logging
 from logging.handlers import RotatingFileHandler
+
+import smtplib
+from email.mime.text import MIMEText
 
 try:
     import settings
@@ -538,13 +542,13 @@ def graphite_flow(time_window, tag, test_mode=False):
             no_data += 1
 
     if no_data == len(checked_list):
+        report_preparation()
         if test_mode is False:
             logger.debug(annotation_inst.create_annotation(dash_id_info.id,
-                                        meta_dash.panel_id,
-                                        ref_id(meta_dash.target_json),
-                                        [tag]))
+                                                           meta_dash.panel_id,
+                                                           ref_id(meta_dash.target_json),
+                                                           [tag]))
             logger.debug(prefix)
-            # logger.debug(metric_data)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_dash.title))
@@ -578,6 +582,7 @@ def elasticsearch_flow(time_window, tag, test_mode=False):
         pass
 
     if not elk_response:
+        report_preparation()
         if test_mode is False:
             logger.debug(annotation_inst.create_annotation(dash_id_info.id,
                                                            meta_dash.panel_id,
@@ -613,6 +618,7 @@ def influxdb_flow(time_window, tag, test_mode=False):
             no_data += 1
 
     if no_data == len(request_inst.influx_checker(metric_data)):
+        report_preparation()
         if test_mode is False:
             logger.debug(annotation_inst.create_annotation(dash_id_info.id,
                                                            meta_dash.panel_id,
@@ -653,6 +659,52 @@ def relevant_time(title, skip='abs'):
     return time_window
 
 
+def report_preparation():
+    """
+    Take values of global variables, compose link, append record to report list
+    :return:
+    """
+    link = '{base_url}/{dash_uid}/{dash_name}?orgId=1&fullscreen&panelId={panel_id}'.format(
+        base_url=settings.base,
+        dash_uid=dash_id_info.uid,
+        dash_name=dash_id_info.name,
+        panel_id=meta_dash.panel_id)
+    report_list.append("Dash: <i>{}</i> panel: <i>{}</i> query: <b>{}</b> <a href=\"{}\">link</a>"
+                       .format(dash_id_info.name,
+                               meta_dash.title,
+                               ref_id(meta_dash.target_json),
+                               link))
+
+
+def send_report(report_list, receivers):
+    """
+    Send an email as a report
+    :param report_list: list of queries without data
+    :param receivers: list of receivers
+    :return:
+    """
+
+    sender = 'Liberty Global DataOps <>'
+
+    graphs_list = '<br>'.join(report_list)
+
+    body = """<h1>Seems like actual data is absent here: </h1>
+    <br>{body}
+    """.format(receivers=', '.join(receivers), body=graphs_list)
+
+    message = MIMEText(body, "html")
+    message["Subject"] = "Dashboard Grafana Checker report"
+    message["From"] = sender
+    message["To"] = ', '.join(receivers)
+
+    try:
+        smtp_obj = smtplib.SMTP('localhost')
+        smtp_obj.sendmail(sender, receivers, message.as_string())
+        logger.info("Successfully sent email report")
+    except BaseException as err:
+        logger.debug("{} \n Error: unable to send email report".format(err))
+
+
 # default timewindow in sec
 TIMEWINDOW = 14400
 # matching time prefix and seconds
@@ -690,6 +742,10 @@ if __name__ == '__main__':
                         default='NO DATA',
                         type=str,
                         help="value of a tag for search/deletion and adding annotations, 'NO DATA' as default")
+    parser.add_argument("-r", "--report",
+                        dest="report",
+                        action='store_true',
+                        help='allow to send email reports, False as default')
     parser.add_argument("-i", "--dry-run",
                         dest='dry_run',
                         action='store_true',
@@ -714,6 +770,7 @@ if __name__ == '__main__':
     request_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers_request)
     annotation_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers_annot)
 
+    report_list = []
     id_info_list = []
     for dash in settings.dash_list:
         try:
@@ -769,3 +826,6 @@ if __name__ == '__main__':
                 logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
                             format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
                 influxdb_flow(timewindow, args.tag, args.dry_run)
+
+    if args.report:
+        send_report(report_list, settings.receivers)

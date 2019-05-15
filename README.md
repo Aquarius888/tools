@@ -17,8 +17,9 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 
 
 ### Native usage:
-<br/> $ python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA')
+<br/> $ python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA', doesn't send a report)
 <br/> $ python3 dashboard_checker.py -c 86400 (deletes old annotation for last 24h (86400 seconds), default time window and tag is 'NO DATA')
 <br/> $ python3 dashboard_checker.py -d graphite (goes through only graphite datasource panels, default time window and tag is 'NO DATA')
 <br/> $ python3 dashboard_checker.py -t TAG (goes through all implemented datasources panels, create annotations with tag TAG)
+<br/> $ python3 dashboard_checker.py -r (sends a report by email)
 <br/> $ python3 dashboard_checker.py -i (dry run, test mode)

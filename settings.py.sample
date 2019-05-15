@@ -14,6 +14,7 @@ headers_request = {"Authorization": "Bearer {}".format(token),
 # url_api = 'http://viepgrfpe12/api'
 
 # garafana PROD
+base = ''
 url_api = 'http://viepgrfpe13/api'
 
 
@@ -55,5 +56,8 @@ dash_list = ['HorizonGO-pl',
 
 # proxy = {'socks5h': 'http://127.0.0.1:8800'}
 proxy = {}
+
+# list of email addresses for reporting
+receivers = []
 
 log_level = 'INFO'
