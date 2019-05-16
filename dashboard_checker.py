@@ -1,3 +1,6 @@
+# TODO: variable's handler in query (influx)
+# TODO: hide similar strings in report under one
+
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
 in this case, adds an annotation on a panel.
@@ -191,7 +194,7 @@ class GrafanaMaker:
             try:
                 datapoints = response[target]['datapoints']
             except TypeError as err:
-                logging.debug("Exception has been raised in graphite_checker function, {}".format(err))
+                logger.debug("Exception has been raised in graphite_checker function, {}".format(err))
                 continue
 
             counter = 0
@@ -337,7 +340,6 @@ def panel_info(panels_info):
     :return: list of namedtuples (id, title, datasource, target_json info)
     """
     meta_list = []
-    # panel
     for panel in panels_info:
         # Parser works ONLY for 'graph' type of panels
         if panel['type'] != 'graph':
@@ -361,8 +363,6 @@ def panel_info(panels_info):
         if 'Mixed' in datasource:
             logger.debug("Datasource for {} is Mixed. Will be assigned as 'default'".format(panel['title']))
             datasource = 'default'
-
-        logging.debug(panel['title'], datasource)
 
         target_list = panel['targets']
 
@@ -457,6 +457,8 @@ def elastic_request(elk_url, index_tmpl, query, time_window, proxy=''):
     # list of rules should be extended if it is necessary
     if '9200' in elk_url:
         elk_url = elk_url.replace('9200', '80/elasticsearch')
+    if '9300' in elk_url:
+        elk_url = elk_url.replace('9300', '80/elasticsearch')
     if 'elasticsearch-odh-ecx' in elk_url:
         elk_url = 'http://172.23.29.161:80/elasticsearch'
     if '80' not in elk_url:
@@ -472,7 +474,7 @@ def elastic_request(elk_url, index_tmpl, query, time_window, proxy=''):
         response = client.search(index=index_tmpl, body=body)
         return response['hits']['hits']
     except exceptions.ConnectionError as er:
-        logging.debug(er)
+        logger.debug(er)
         return None
 
 
@@ -573,13 +575,28 @@ def elasticsearch_flow(time_window, tag, test_mode=False):
         index_templ = re.search(r'\[(\S+)\]', datasource_db).group(1) + '*'
 
     elastic_query = pretty_search(meta_dash.target_json, 'query')[0]
-    query = elastic_query_format(elastic_query)
 
+    if '$' in elastic_query:
+        split_query = elastic_query.split()
+        for i in range(len(split_query)):
+            if '$' in split_query[i]:
+                split_query[i] = dashboard_vars.get(split_query[i].lstrip('$'))
+        try:
+            elastic_query = ' '.join(split_query)
+        except TypeError as err:
+            logger.debug('Wrong query?! Error: {} Check dashboard {}, panel {}, query {}'
+                         .format(err,
+                                 dash_id_info.name,
+                                 meta_dash.title,
+                                 ref_id(meta_dash.target_json)))
+            return None
+
+    query = elastic_query_format(elastic_query)
     elk_response = elastic_request(datasource_url, index_templ, query, time_window, settings.proxy)
 
-    # case when elasticsearch request returned connection error
+    # ES responded 'connection error'
     if elk_response is None:
-        pass
+        return None
 
     if not elk_response:
         report_preparation()
@@ -684,7 +701,7 @@ def send_report(report_list, receivers):
     :return:
     """
 
-    sender = 'Liberty Global DataOps <>'
+    sender = 'Liberty Global DataOps <dataops@team>'
 
     graphs_list = '<br>'.join(report_list)
 
@@ -793,6 +810,7 @@ if __name__ == '__main__':
         dashboard_vars = dict()
         for variable in dash_data['templating']['list']:
             dashboard_vars[variable.get('name')] = variable.get('query')
+        logger.debug("Variables: {}".format(dashboard_vars))
 
         # main flow: check data and set annotations
         for meta_dash in panel_info(dash_data['panels']):
