@@ -1,6 +1,5 @@
+# TODO: search through folders
 # TODO: variable's handler in query (influx)
-# TODO: hide similar strings in report under one
-
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
 in this case, adds an annotation on a panel.
@@ -60,15 +59,19 @@ class GrafanaMaker:
         """
         Make a request about dashboard info by name
         :param name_dash: Grafana dashboard's general name
-        :return: tuple (dashboards id, dashboards uid)
+        :return: list of tuples (dashboard title, dashboards id, dashboards uid)
         """
+        id_uid = []
         composed_url = '{base}/search?query={dash}'.format(
             base=self.url_api,
             dash=name_dash
         )
         response = self.session.get(composed_url)
+
         try:
-            return response.json()[0]['id'], response.json()[0]['uid']
+            for db in response.json():
+                id_uid.append((db['title'], db['id'], db['uid']))
+            return id_uid
         except IndexError:
             logger.debug("Dashboard \"{}\" doesn't exist".format(name_dash))
             return None
@@ -352,7 +355,6 @@ def panel_info(panels_info):
                          format(panel['title']))
             # Seems like it is a bug in Grafana
             datasource = 'default'
-            # continue
 
         if datasource is None:
             # Seems like it is a bug in Grafana
@@ -410,15 +412,12 @@ def elastic_query_format(query_str):
     :param query_str: input, dirty string with query
     :return: list of clean query
     """
-    meta_symbols = r'[?*+]'
+    meta_symbols = r'[^ a-zA-Z0-9\*_]'
+    wildcard = r'\*'
     range_symbols = r'\[(\S*)\sTO\s(\S*)\]'
     list_request = []
     queries = query_str.split('AND')
     for qr in queries:
-        # check that elasticsearch query contains special symbols (like, wildcard)
-        if re.search(meta_symbols, qr):
-            continue
-
         try:
             key, value, *_ = qr.split(':')
         except ValueError as err:
@@ -427,16 +426,22 @@ def elastic_query_format(query_str):
                 err=err))
             continue
 
+        # remove meta symbols, except *
+        if re.search(meta_symbols, value):
+            value = re.sub(meta_symbols, '', value)
+
+        # check that elasticsearch query contains special symbols (like, wildcard)
+        if re.search(wildcard, value):
+            list_request.append({'wildcard': {key.strip(): value.strip()}})
+            continue
+
         # range handler
-        if re.search(range_symbols, qr):
-            resp = re.search(range_symbols, qr)
+        if re.search(range_symbols, value):
+            resp = re.search(range_symbols, value)
             list_request.append({'range': {key.strip(): {'gte': int(resp.group(1)), 'lte': int(resp.group(2))}}})
             continue
 
-        # remove double quotes around value
-        if re.search(r'\"', value):
-            value = value.strip('"')
-        list_request.append({'match': {key.strip(): value.strip()}})
+        list_request.append({'match': {key.strip('( )'): value.strip('( )')}})
     return list_request
 
 
@@ -624,9 +629,17 @@ def influxdb_flow(time_window, tag, test_mode=False):
     """
     time_filter = 'time >= now() - {timewindow}m'.format(timewindow=str(int(time_window / 60)))
     extract = pretty_search(meta_dash.target_json, 'query')
-    prefix = re.sub(r'\$\S*timeFilter', time_filter, extract[0])
-    # GROUP BY replacement
-    prefix = re.sub(r'\$\S*interval', '30s', prefix)
+    try:
+        prefix = re.sub(r'\$\S*timeFilter', time_filter, extract[0])
+        # GROUP BY replacement
+        prefix = re.sub(r'\$\S*interval', '30s', prefix)
+    except TypeError as err:
+        logger.debug("Error: {err}, can't find query. Check dashboard {d}, panel {p}, query {q}".
+                     format(err=err,
+                            d=dash_id_info.name,
+                            p=meta_dash.title,
+                            q=ref_id(meta_dash.target_json)))
+        return None
     metric_data = request_inst.influxdb_query(prefix, datasource_db, datasource_id)
 
     no_data = 0
@@ -686,28 +699,35 @@ def report_preparation():
         dash_uid=dash_id_info.uid,
         dash_name=dash_id_info.name,
         panel_id=meta_dash.panel_id)
-    report_list.append("Dash: <i>{}</i> panel: <i>{}</i> query: <b>{}</b> <a href=\"{}\">link</a>"
-                       .format(dash_id_info.name,
-                               meta_dash.title,
-                               ref_id(meta_dash.target_json),
-                               link))
+    dash_rec = "Dashboard: <b>{}</b>".format(dash_id_info.name)
+    panel_rec = "panel: <a href=\"{}\"><i>{}</i></a>".format(link, meta_dash.title)
+
+    if dash_rec in report_struct.keys():
+        if panel_rec in report_struct[dash_rec]:
+            report_struct[dash_rec][panel_rec].append(ref_id(meta_dash.target_json))
+        else:
+            report_struct[dash_rec][panel_rec] = [ref_id(meta_dash.target_json)]
+
+    else:
+        report_struct[dash_rec] = {panel_rec: [ref_id(meta_dash.target_json)]}
 
 
-def send_report(report_list, receivers):
+def send_report(report_struct, receivers):
     """
     Send an email as a report
-    :param report_list: list of queries without data
+    :param report_struct: dict {'Db name, panel name, link': [list of queries]}
     :param receivers: list of receivers
     :return:
     """
 
     sender = 'Liberty Global DataOps <dataops@team>'
+    body = "<h1>Seems like actual data is absent here: </h1>"
 
-    graphs_list = '<br>'.join(report_list)
-
-    body = """<h1>Seems like actual data is absent here: </h1>
-    <br>{body}
-    """.format(receivers=', '.join(receivers), body=graphs_list)
+    for dash, panel_queries in report_struct.items():
+        body += "<br>{dash}".format(dash=dash)
+        for panel, query in panel_queries.items():
+            body += "<br>&emsp;&emsp;&emsp;{p}, queries: {q}".format(p=panel, q=' '.join(query))
+        body += "<br>"
 
     message = MIMEText(body, "html")
     message["Subject"] = "Dashboard Grafana Checker report"
@@ -787,12 +807,12 @@ if __name__ == '__main__':
     request_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers_request)
     annotation_inst = GrafanaMaker(settings.url_api, settings.proxy, settings.headers_annot)
 
-    report_list = []
+    report_struct = {}
     id_info_list = []
     for dash in settings.dash_list:
         try:
-            dash_id, dash_uid = request_inst.get_uid(dash)
-            id_info_list.append(Id_dash(dash, dash_id, dash_uid))
+            for dash_title, dash_id, dash_uid in request_inst.get_uid(dash):
+                id_info_list.append(Id_dash(dash_title, dash_id, dash_uid))
         except TypeError as err:
             logger.debug("{dash}: {err}".format(dash=dash, err=err))
             continue
@@ -810,7 +830,6 @@ if __name__ == '__main__':
         dashboard_vars = dict()
         for variable in dash_data['templating']['list']:
             dashboard_vars[variable.get('name')] = variable.get('query')
-        logger.debug("Variables: {}".format(dashboard_vars))
 
         # main flow: check data and set annotations
         for meta_dash in panel_info(dash_data['panels']):
@@ -845,5 +864,5 @@ if __name__ == '__main__':
                             format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
                 influxdb_flow(timewindow, args.tag, args.dry_run)
 
-    if args.report:
-        send_report(report_list, settings.receivers)
+    if args.report and report_struct:
+        send_report(report_struct, settings.receivers)
