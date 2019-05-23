@@ -1,4 +1,5 @@
 # TODO: search through folders
+# TODO: search dashboards with tags
 # TODO: variable's handler in query (influx)
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
@@ -184,6 +185,26 @@ class GrafanaMaker:
         }
         return self._get_proxy_call(ds_id, 'render', request)
 
+    def elastic_query(self, index_tmpl, query, time_window, ds_id):
+
+        gte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - time_window))
+        lte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()))
+
+        search_arr = []
+        data = ''
+        index_part = '{"index":"%s"}' % index_tmpl
+        body = '{"query": {"bool": {"filter": {"range": {"@timestamp": {"gte": "%s", "lte": "%s"}}}, "must": %s}}}' \
+               % (gte, lte, query)
+        body = body.replace('\'', '\"')
+        search_arr.append(json.dumps(index_part))
+        search_arr.append(json.dumps(body))
+
+        for each in search_arr:
+            data += '{}\n'.format(json.loads(each))
+        logger.debug(data)
+
+        return self._get_proxy_call(ds_id, '_msearch', data)
+
     @staticmethod
     def graphite_checker(response):
         """
@@ -260,12 +281,12 @@ class GrafanaMaker:
             base=self.url_api,
             datasource_id=ds_id,
             query=query),
-            params=request)
+            data=request)
 
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as er:
-            return "Error: {error}".format(error=er)
+            return "Error: {error}".format(error=response.text)
 
         return response.json()
 
@@ -432,16 +453,16 @@ def elastic_query_format(query_str):
 
         # check that elasticsearch query contains special symbols (like, wildcard)
         if re.search(wildcard, value):
-            list_request.append({'wildcard': {key.strip(): value.strip()}})
+            list_request.append({"wildcard": {key.strip(): value.strip()}})
             continue
 
         # range handler
         if re.search(range_symbols, value):
             resp = re.search(range_symbols, value)
-            list_request.append({'range': {key.strip(): {'gte': int(resp.group(1)), 'lte': int(resp.group(2))}}})
+            list_request.append({"range": {key.strip(): {"gte": int(resp.group(1)), "lte": int(resp.group(2))}}})
             continue
 
-        list_request.append({'match': {key.strip('( )'): value.strip('( )')}})
+        list_request.append({"match": {key.strip('( )'): value.strip('( )')}})
     return list_request
 
 
@@ -473,13 +494,17 @@ def elastic_request(elk_url, index_tmpl, query, time_window, proxy=''):
         client = Elasticsearch(hosts=[elk_url],
                                connection_class=RequestsHttpConnection,
                                proxies=proxy,
-                               timeout=120)
+                               timeout=60)
         # client.ping()
         body = {'query': {'bool': {'filter': {'range': {'@timestamp': {"gte": gte, "lte": lte}}}, 'must': query}}}
         response = client.search(index=index_tmpl, body=body)
+        logger.debug(body)
         return response['hits']['hits']
     except exceptions.ConnectionError as er:
         logger.debug(er)
+        return None
+    except exceptions.RequestError as request_error:
+        logger.debug(request_error)
         return None
 
 
@@ -597,8 +622,9 @@ def elasticsearch_flow(time_window, tag, test_mode=False):
             return None
 
     query = elastic_query_format(elastic_query)
-    elk_response = elastic_request(datasource_url, index_templ, query, time_window, settings.proxy)
-
+    # elk_response = elastic_request(datasource_url, index_templ, query, time_window, settings.proxy)
+    elk_response = annotation_inst.elastic_query(index_templ, query, time_window, datasource_id)
+    logger.debug(elk_response)
     # ES responded 'connection error'
     if elk_response is None:
         return None
@@ -666,12 +692,12 @@ def influxdb_flow(time_window, tag, test_mode=False):
 def relevant_time(title, skip='abs'):
     """
     Try to extract relevant time or skip pointer from title of panel
-    :param skip: specifies that script skips checkinf of a panel
+    :param skip: specifies that script skips checking of a panel
     :param title: title of panel
     :return: time window or None, in second
     """
     # convert relevant time in title if it exists
-    pattern = r'\s\((\d*[dhms]|daily|hourly|minute|abs|per day|per hour|per min\D*)\)'
+    pattern = r'\s\((\S*\/)?(\d*[dhms]|daily|hourly|minute|abs|per day|per hour|per min\D*)\)'
     relevant = re.search(pattern, title)
 
     if relevant:
@@ -686,6 +712,10 @@ def relevant_time(title, skip='abs'):
             time_window = TIMEPREFIX.get(time_string)
     else:
         time_window = TIMEWINDOW
+
+    if time_window != TIMEWINDOW:
+        logger.debug('Timewindow: {t} panel: {p}'.format(t=time_window, p=title))
+
     return time_window
 
 
@@ -721,7 +751,7 @@ def send_report(report_struct, receivers):
     """
 
     sender = 'Liberty Global DataOps <dataops@team>'
-    body = "<h1>Seems like actual data is absent here: </h1>"
+    body = "<h1>Seems like actual data is missing here: </h1>"
 
     for dash, panel_queries in report_struct.items():
         body += "<br>{dash}".format(dash=dash)
