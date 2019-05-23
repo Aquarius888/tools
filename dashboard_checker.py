@@ -479,6 +479,7 @@ def graphite_flow(time_window, tag, test_mode=False):
                                  dash_id_info.name,
                                  meta_dash.title,
                                  ref_id(meta_dash.target_json)))
+            report_preparation('- graphite broken query?')
             return None
 
     metric_data = request_inst.graphite_query(prefix, datasource_id, time_window)
@@ -540,6 +541,7 @@ def elasticsearch_flow(time_window, tag, test_mode=False):
         hits = elk_response['responses'][0]['hits']['hits']
     except BaseException as err:
         logger.debug('Elastic request issue: {}'.format(err))
+        report_preparation('- ES broken query?')
         return None
 
     if len(hits) == 0:
@@ -578,6 +580,7 @@ def influxdb_flow(time_window, tag, test_mode=False):
                             d=dash_id_info.name,
                             p=meta_dash.title,
                             q=ref_id(meta_dash.target_json)))
+        report_preparation('- influxdb broken query?')
         return None
     metric_data = request_inst.influxdb_query(prefix, datasource_db, datasource_id)
 
@@ -632,7 +635,7 @@ def relevant_time(title, skip='abs'):
     return time_window
 
 
-def report_preparation():
+def report_preparation(broken_query=''):
     """
     Take values of global variables, compose link, append record to report list
     :return:
@@ -643,7 +646,7 @@ def report_preparation():
         dash_name=dash_id_info.name,
         panel_id=meta_dash.panel_id)
     dash_rec = "Dashboard: <b>{}</b>".format(dash_id_info.name)
-    panel_rec = "panel: <a href=\"{}\"><i>{}</i></a>".format(link, meta_dash.title)
+    panel_rec = "panel: <a href=\"{}\"><i>{}</i></a> {}".format(link, meta_dash.title, broken_query)
 
     if dash_rec in report_struct.keys():
         if panel_rec in report_struct[dash_rec]:
