@@ -1,6 +1,9 @@
 # TODO: search through folders
 # TODO: search dashboards with tags
 # TODO: variable's handler in query (influx)
+# TODO: parallelization
+# TODO: add wrong queries to email report
+
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
 in this case, adds an annotation on a panel.
@@ -18,7 +21,6 @@ Combinations of arguments are available.
 """
 import requests
 from argparse import ArgumentParser
-from elasticsearch import Elasticsearch, RequestsHttpConnection, exceptions
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
@@ -33,6 +35,7 @@ from logging.handlers import RotatingFileHandler
 
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 try:
     import settings
@@ -185,26 +188,6 @@ class GrafanaMaker:
         }
         return self._get_proxy_call(ds_id, 'render', request)
 
-    def elastic_query(self, index_tmpl, query, time_window, ds_id):
-
-        gte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - time_window))
-        lte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()))
-
-        search_arr = []
-        data = ''
-        index_part = '{"index":"%s"}' % index_tmpl
-        body = '{"query": {"bool": {"filter": {"range": {"@timestamp": {"gte": "%s", "lte": "%s"}}}, "must": %s}}}' \
-               % (gte, lte, query)
-        body = body.replace('\'', '\"')
-        search_arr.append(json.dumps(index_part))
-        search_arr.append(json.dumps(body))
-
-        for each in search_arr:
-            data += '{}\n'.format(json.loads(each))
-        logger.debug(data)
-
-        return self._get_proxy_call(ds_id, '_msearch', data)
-
     @staticmethod
     def graphite_checker(response):
         """
@@ -230,6 +213,26 @@ class GrafanaMaker:
             else:
                 data_lst.append((response[target]['target'], 'Checked'))
         return data_lst
+
+    def elastic_query(self, index_tmpl, query, time_window, ds_id):
+        """
+        Make a request to Elastic via Grafana proxy API
+        :param index_tmpl: template (wildcard) of ES indices
+        :param query: main part of 'must' query to ES
+        :param time_window: time window
+        :param ds_id: datasource id
+        :return: json
+        """
+
+        gte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - time_window))
+        lte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()))
+
+        index_part = '{"index":"%s"}' % index_tmpl
+        body = '{"query": {"bool": {"filter": [{"range": {"@timestamp": {"gte": "%s", "lte": "%s"}}}, ' \
+               '{"query_string": {"analyze_wildcard":true,"query": "%s"}}]}}}' % (gte, lte, query)
+        data = '{index}\n{body}\n'.format(index=index_part, body=body)
+
+        return self._get_proxy_call(ds_id, '_msearch', data)
 
     def influxdb_query(self, prefix, database, ds_id):
         """
@@ -286,7 +289,7 @@ class GrafanaMaker:
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as er:
-            return "Error: {error}".format(error=response.text)
+            return "Error: {error}\n{text}".format(error=er, text=response.text)
 
         return response.json()
 
@@ -368,7 +371,6 @@ def panel_info(panels_info):
         # Parser works ONLY for 'graph' type of panels
         if panel['type'] != 'graph':
             continue
-
         try:
             datasource = panel['datasource']
         except KeyError:
@@ -425,87 +427,6 @@ def ref_id(target_json):
     except TypeError:
         logger.debug("A lot of quires on a panel, ref_id doesn't have a letter")
         return 'One_more'
-
-
-def elastic_query_format(query_str):
-    """
-    Get input, parse it, clean special symbols, compose list of clean query
-    :param query_str: input, dirty string with query
-    :return: list of clean query
-    """
-    meta_symbols = r'[^ a-zA-Z0-9\*_]'
-    wildcard = r'\*'
-    range_symbols = r'\[(\S*)\sTO\s(\S*)\]'
-    list_request = []
-    queries = query_str.split('AND')
-    for qr in queries:
-        try:
-            key, value, *_ = qr.split(':')
-        except ValueError as err:
-            logger.debug("Elasticsearch query {qr} has been skipped because {err}".format(
-                qr=query_str,
-                err=err))
-            continue
-
-        # remove meta symbols, except *
-        if re.search(meta_symbols, value):
-            value = re.sub(meta_symbols, '', value)
-
-        # check that elasticsearch query contains special symbols (like, wildcard)
-        if re.search(wildcard, value):
-            list_request.append({"wildcard": {key.strip(): value.strip()}})
-            continue
-
-        # range handler
-        if re.search(range_symbols, value):
-            resp = re.search(range_symbols, value)
-            list_request.append({"range": {key.strip(): {"gte": int(resp.group(1)), "lte": int(resp.group(2))}}})
-            continue
-
-        list_request.append({"match": {key.strip('( )'): value.strip('( )')}})
-    return list_request
-
-
-def elastic_request(elk_url, index_tmpl, query, time_window, proxy=''):
-    """
-    Make a request to Elasticsearch
-    :param elk_url:
-    :param index_tmpl:
-    :param query:
-    :param time_window: time window in seconds
-    :param proxy:
-    :return: list of hits
-    """
-
-    gte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - time_window))
-    lte = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time()))
-
-    # list of rules should be extended if it is necessary
-    if '9200' in elk_url:
-        elk_url = elk_url.replace('9200', '80/elasticsearch')
-    if '9300' in elk_url:
-        elk_url = elk_url.replace('9300', '80/elasticsearch')
-    if 'elasticsearch-odh-ecx' in elk_url:
-        elk_url = 'http://172.23.29.161:80/elasticsearch'
-    if '80' not in elk_url:
-        elk_url = 'http://{}:80/elasticsearch'.format(elk_url.split('/')[2])
-
-    try:
-        client = Elasticsearch(hosts=[elk_url],
-                               connection_class=RequestsHttpConnection,
-                               proxies=proxy,
-                               timeout=60)
-        # client.ping()
-        body = {'query': {'bool': {'filter': {'range': {'@timestamp': {"gte": gte, "lte": lte}}}, 'must': query}}}
-        response = client.search(index=index_tmpl, body=body)
-        logger.debug(body)
-        return response['hits']['hits']
-    except exceptions.ConnectionError as er:
-        logger.debug(er)
-        return None
-    except exceptions.RequestError as request_error:
-        logger.debug(request_error)
-        return None
 
 
 def annotation_handler(time_window, dash_id, tag, test_mode=False):
@@ -606,30 +527,22 @@ def elasticsearch_flow(time_window, tag, test_mode=False):
 
     elastic_query = pretty_search(meta_dash.target_json, 'query')[0]
 
-    if '$' in elastic_query:
-        split_query = elastic_query.split()
-        for i in range(len(split_query)):
-            if '$' in split_query[i]:
-                split_query[i] = dashboard_vars.get(split_query[i].lstrip('$'))
-        try:
-            elastic_query = ' '.join(split_query)
-        except TypeError as err:
-            logger.debug('Wrong query?! Error: {} Check dashboard {}, panel {}, query {}'
-                         .format(err,
-                                 dash_id_info.name,
-                                 meta_dash.title,
-                                 ref_id(meta_dash.target_json)))
-            return None
+    if '\"' in elastic_query:
+        elastic_query = elastic_query.replace('\"', '\\"')
 
-    query = elastic_query_format(elastic_query)
-    # elk_response = elastic_request(datasource_url, index_templ, query, time_window, settings.proxy)
-    elk_response = annotation_inst.elastic_query(index_templ, query, time_window, datasource_id)
-    logger.debug(elk_response)
+    # annotation_inst uses application/json header, it is correct for a request to ES
+    elk_response = annotation_inst.elastic_query(index_templ, elastic_query, time_window, datasource_id)
     # ES responded 'connection error'
     if elk_response is None:
         return None
 
-    if not elk_response:
+    try:
+        hits = elk_response['responses'][0]['hits']['hits']
+    except BaseException as err:
+        logger.debug('Elastic request issue: {}'.format(err))
+        return None
+
+    if len(hits) == 0:
         report_preparation()
         if test_mode is False:
             logger.debug(annotation_inst.create_annotation(dash_id_info.id,
@@ -704,7 +617,7 @@ def relevant_time(title, skip='abs'):
         if skip in relevant.group():
             return None
 
-        time_string = relevant.group(1)
+        time_string = relevant.group(2)
         if re.search(r'\d+', time_string):
             time_window = int(re.search(r'\d*', time_string).group()) * TIMEPREFIX.get(
                 re.search(r'\D', time_string).group())
@@ -751,25 +664,27 @@ def send_report(report_struct, receivers):
     """
 
     sender = 'Liberty Global DataOps <dataops@team>'
-    body = "<h1>Seems like actual data is missing here: </h1>"
+    body = "<h1>There is no data here: </h1>"
 
     for dash, panel_queries in report_struct.items():
         body += "<br>{dash}".format(dash=dash)
         for panel, query in panel_queries.items():
-            body += "<br>&emsp;&emsp;&emsp;{p}, queries: {q}".format(p=panel, q=' '.join(query))
-        body += "<br>"
+            body += "\n<br>{tab}{tab}{tab}{p}, queries: {q}".format(tab='&emsp;', p=panel, q=' '.join(query))
+        body += "\n<br>"
 
-    message = MIMEText(body, "html")
+    message = MIMEMultipart('alternative')
     message["Subject"] = "Dashboard Grafana Checker report"
     message["From"] = sender
     message["To"] = ', '.join(receivers)
 
+    text = MIMEText(body, "html")
+    message.attach(text)
     try:
         smtp_obj = smtplib.SMTP('localhost')
         smtp_obj.sendmail(sender, receivers, message.as_string())
         logger.info("Successfully sent email report")
     except BaseException as err:
-        logger.debug("{} \n Error: unable to send email report".format(err))
+        logger.debug("Error: unable to send email report \n {}".format(err))
 
 
 # default timewindow in sec
