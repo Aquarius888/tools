@@ -2,22 +2,11 @@
 # TODO: search dashboards with tags
 # TODO: variable's handler in query (influx)
 # TODO: parallelization
-# TODO: add wrong queries to email report
+# TODO: mark query as uncheckable by underscore after the alias
 
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
-in this case, adds an annotation on a panel.
-
-Usage:
-python3 dashboard_checker.py (default run, doesn't delete old annotations, default time window and tag is 'NO DATA')
-python3 dashboard_checker.py -c 86400 (deletes old annotation for last 24h (86400 seconds),
-                                       default time window and tag is 'NO DATA')
-python3 dashboard_checker.py -d graphite (goes through only graphite datasource panels,
-                                       default time window and tag is 'NO DATA')
-python3 dashboard_checker.py -t TAG (goes through all implemented datasources panels, create annotations with tag TAG)
-python3 dashboard_checker.py -i (dry run, test mode)
-
-Combinations of arguments are available.
+in this case, adds an annotation on a panel and/or composes a report and send it to email.
 """
 import requests
 from argparse import ArgumentParser
@@ -311,9 +300,6 @@ def configure_logging(log_level):
     log_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'dashboard_checker.log')
     rotating_hndlr = RotatingFileHandler(filename=log_path, maxBytes=5 * 1024 * 1024, backupCount=2)
     rotating_hndlr.setFormatter(formatter)
-    # workaround - avoid duplication of log records, review is required
-    if logger.hasHandlers():
-        logger.handlers.clear()
 
     logger.addHandler(rotating_hndlr)
 
@@ -431,7 +417,7 @@ def ref_id(target_json):
 
 def annotation_handler(time_window, dash_id, tag, test_mode=False):
     """
-    Handles Grafana of annotations, looks for annotations on dashboard according to its id and tag and deletes it
+    Handles Grafana's annotations, looks for annotations on dashboard according to its id and tag and deletes it
     :param time_window: time window for search annotations, in s
     :param dash_id: id of dashboard
     :param tag: tag of annotations

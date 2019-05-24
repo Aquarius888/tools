@@ -6,11 +6,11 @@ RUN set -ex \
 
 RUN mkdir /checker
 
-RUN pip3 install requests elasticsearch
+RUN pip3 install requests
 
 COPY dashboard_checker.py /checker
 COPY settings.py /checker
-COPY kick_off /usr/sbin
+COPY kick_off.sh /usr/sbin/kick_off
 RUN chmod 0777 /usr/sbin/kick_off
 
 CMD ["kick_off"]
