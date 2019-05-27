@@ -6,7 +6,7 @@ RUN set -ex \
 
 RUN mkdir /checker
 
-RUN pip3 install requests
+RUN pip3 install asyncio aiohttp
 
 COPY dashboard_checker.py /checker
 COPY settings.py /checker

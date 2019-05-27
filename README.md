@@ -1,7 +1,8 @@
 # Grafana dashboard checker
 Python requirements:
 The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and requires following modules:
-- requests
+- asyncio
+- aiohttp
 
 ## Usage with docker container
 1. git clone https://github.com/Aquarius888/tools.git
