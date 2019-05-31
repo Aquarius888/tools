@@ -68,13 +68,41 @@ class GrafanaMaker:
 
     async def get_dashboard(self, uid):
         """
-        Get dashboard's data
+        Get dashboard's data by uid
         :param uid: dashboard uid
         :return: json
         """
         composed_url = '{base}/dashboards/uid/{uid}'.format(
             base=self.url_api,
             uid=uid)
+        response = await self.session.get(composed_url)
+        return await response.json()
+
+    async def get_folders(self, limit=20):
+        """
+        Get list of {id, uid, title} for all (limit) folders
+        :param limit: limit for request
+        :return: json
+        """
+        composed_url = '{base}/folders?limit={limit}'.format(
+            base=self.url_api,
+            limit=limit
+        )
+        response = await self.session.get(composed_url)
+        return await response.json()
+
+    async def search_in_folder(self, folder_id, dash_query):
+        """
+        Get json with at least id, uid, title of found dashboards
+        :param folder_id:
+        :param dash_query:
+        :return: json
+        """
+        composed_url = '{base}/search?folderIds={folder_id}&query={dash_query}&starred=false'.format(
+            base=self.url_api,
+            folder_id=folder_id,
+            dash_query=dash_query
+        )
         response = await self.session.get(composed_url)
         return await response.json()
 
@@ -671,6 +699,18 @@ def send_report(report_struct, receivers):
         logger.debug("Error: unable to send email report \n {}".format(err))
 
 
+async def get_dash_info_from_folder(folder, query=''):
+    json_folder = await request_inst.get_folders()
+
+    for directory in json_folder:
+        if folder in directory['title']:
+            folder_id = directory['id']
+
+    json_folder_dash = await request_inst.search_in_folder(folder_id, query)
+    for dash in json_folder_dash:
+        id_info_list.append(Id_dash(dash['title'], dash['id'], dash['uid']))
+
+
 async def get_dash_info(dash):
     try:
         for dash_title, dash_id, dash_uid in await request_inst.get_uid(dash):
@@ -797,6 +837,14 @@ if __name__ == '__main__':
                         default='NO DATA',
                         type=str,
                         help="value of a tag for search/deletion and adding annotations, 'NO DATA' as default")
+    parser.add_argument("-f", "--folder",
+                        dest='folder',
+                        type=str,
+                        help="name of grafana folder for checking dashboards")
+    parser.add_argument("-q", "--query-folder",
+                        dest='dash_query',
+                        type=str,
+                        help="name or part of name of dashboard(s) for checking, REQUIRES -f key filled")
     parser.add_argument("-r", "--report",
                         dest="report",
                         action='store_true',
@@ -828,7 +876,11 @@ if __name__ == '__main__':
     id_info_list = []
 
     ioloop = asyncio.get_event_loop()
-    ioloop.run_until_complete(exec_dash_info())
+
+    if args.folder:
+        ioloop.run_until_complete(get_dash_info_from_folder(args.folder, args.dash_query))
+    else:
+        ioloop.run_until_complete(exec_dash_info())
 
     # current time in ms
     current_timestamp = int(time.time() * 1000)
@@ -842,4 +894,3 @@ if __name__ == '__main__':
 
     if args.report and report_struct:
         send_report(report_struct, settings.receivers)
-
