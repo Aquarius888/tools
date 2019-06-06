@@ -18,6 +18,16 @@
   register: dashboard_checker_trigger_systemd_service_file
   when: dashboard_checker_init_type == 'systemd'
 
+- name: "Install the Upstart service for the container: {{ dashboard_checker_container_instance }}"
+  template:
+    src: upstart.service.j2
+    dest: "{{ dashboard_checker_upstart_service_dir_path }}/{{ dashboard_checker_service_label }}.conf"
+    owner: root
+    group: root
+    mode: 0644
+  register: dashboard_checker_trigger_upstart_service_file
+  when: dashboard_checker_init_type == 'upstart'
+
 - name: "Reload the Systemd service for the container: {{ dashboard_checker_container_instance }}"
   shell: /usr/bin/systemctl daemon-reload
   register: result
@@ -25,6 +35,14 @@
   delay: 3
   until: result is success
   when: dashboard_checker_trigger_systemd_service_file|changed
+
+- name: "Reload the Upstart service for the container: {{ dashboard_checker_container_instance }}"
+  shell: /sbin/initctl reload-configuration
+  register: result
+  retries: 3
+  delay: 3
+  until: result is success
+  when: dashboard_checker_trigger_upstart_service_file|changed
 
 - name: "Install the Systemd handler for the container: {{ dashboard_checker_container_instance }}"
   template:
@@ -37,8 +55,20 @@
   tags:
     - handler
 
+- name: "Install the Upstart handler for the container: {{ dashboard_checker_container_instance }}"
+  template:
+    src: upstart.handler.j2
+    dest: "{{ dashboard_checker_handler_prefix }}-{{ dashboard_checker_container_name }}"
+    owner: root
+    group: root
+    mode: 0755
+  when: dashboard_checker_init_type == 'upstart'
+  tags:
+    - handler
+    
 - name: "Notify the service for the container: {{ dashboard_checker_container_instance }}"
   set_fact:
     dashboard_checker_restart_enabled: true
   when: dashboard_checker_trigger_systemd_service_file|changed or
+    dashboard_checker_trigger_upstart_service_file|changed or
     dashboard_checker_trigger_image|changed

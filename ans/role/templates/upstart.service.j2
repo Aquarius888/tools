@@ -1,0 +1,41 @@
+description "Docker Service {{ dashboard_checker_container_name }}"
+author      "LGI DataOps Team"
+
+start on runlevel [2345]
+stop on runlevel [06]
+
+respawn
+respawn limit unlimited
+
+kill timeout 60
+
+pre-start script
+{{ dashboard_checker_docker_binary_path }} stop -t 60 "{{ dashboard_checker_container_name }}" 2>/dev/null || true
+{{ dashboard_checker_docker_binary_path }} rm -f "{{ dashboard_checker_container_name }}" 2>/dev/null || true
+sleep 1
+end script
+
+script
+{{ dashboard_checker_docker_binary_path }} run \
+--rm \
+--name '{{ dashboard_checker_container_name }}' \
+--net 'host' \
+{% for volume in (dashboard_checker_volumes_basic + dashboard_checker_volumes) %}
+--volume '{{ volume }}' \
+{% endfor %}
+{% if dashboard_checker_entrypoint is defined %}
+--entrypoint '{{ dashboard_checker_entrypoint }}' \
+{% endif %}
+{% if dashboard_checker_command is defined %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}' \
+{{ dashboard_checker_command }}
+{% else %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}'
+{% endif %}
+end script
+
+post-stop script
+{{ dashboard_checker_docker_binary_path }} stop -t 60 "{{ dashboard_checker_container_name }}" 2>/dev/null || true
+{{ dashboard_checker_docker_binary_path }} rm -f "{{ dashboard_checker_container_name }}" 2>/dev/null || true
+sleep 1
+end script

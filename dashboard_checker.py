@@ -1,6 +1,5 @@
 # TODO: write asserts for async functions
 # TODO: variable's handler in query (influx)
-# TODO: mark query as uncheckable by underscore after the alias
 
 """
 The tool goes through dashboards (panel's type 'graph') and looks for gaps in data,
@@ -356,6 +355,17 @@ def pretty_search(dict_or_list, key_to_search, search_for_first_only=False):
     return search_result if search_result else None
 
 
+def exclude_request(request):
+    """
+    Allow to exclude request via special symbol in alias ( alias_ )
+    :param request: grafana's target or query
+    :return: True or None
+    """
+    if request.endswith('_\')'):
+        logger.debug("Request has been excluded {}".format(request))
+        return True
+
+
 def panel_info(panels_info):
     """
     Parse panel info and compose list of namedtuple with info for checked panels
@@ -483,6 +493,9 @@ async def graphite_flow(time_window, tag, meta_info, dash_id_info, dashboard_var
             report_preparation(dash_id_info, meta_info, '- graphite broken query?')
             return None
 
+    if exclude_request(prefix):
+        return None
+
     metric_data = await request_inst.graphite_query(prefix, datasource_id, time_window)
     checked_list = request_inst.graphite_checker(metric_data)
 
@@ -532,6 +545,9 @@ async def elasticsearch_flow(time_window, tag, datasource_db, datasource_id, met
         index_templ = re.search(r'\[(\S+)\]', datasource_db).group(1) + '*'
 
     elastic_query = pretty_search(meta_info.target_json, 'query')[0]
+
+    if exclude_request(elastic_query):
+        return None
 
     if '\"' in elastic_query:
         elastic_query = elastic_query.replace('\"', '\\"')
@@ -596,6 +612,10 @@ async def influxdb_flow(time_window, tag, dash_id_info, meta_info, datasource_db
                             q=ref_id(meta_info.target_json)))
         report_preparation(dash_id_info, meta_info, '- influxdb broken query?')
         return None
+
+    if exclude_request(prefix):
+        return None
+
     metric_data = await request_inst.influxdb_query(prefix, datasource_db, datasource_id)
 
     no_data = 0
