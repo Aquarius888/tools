@@ -1,7 +1,7 @@
 ---
 
 - name: Deploy Grafana Checker Tool
-  hosts: viepgrfpe39
+  hosts:
   environment: "{{ ansible_environment }}"
   become: true
 
