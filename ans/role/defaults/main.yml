@@ -21,7 +21,7 @@ dashboard_checker_service_label: "docker-{{ dashboard_checker_container_name }}"
 dashboard_checker_config_dir_path: /etc/dashboard-checker
 dashboard_checker_config_file_name: settings.py
 dashboard_checker_log_file_name: dashboard_checker.log
-dashboard_checker_log_dir_path: /var/log/dashboard_checker
+dashboard_checker_log_dir_path: /var/log/docker/dashboard_checker
 
 dashboard_checker_config_file_template: settings.py.j2
 
@@ -69,10 +69,10 @@ dashboard_checker_docker_binary_path: /usr/bin/docker
 dashboard_checker_handler_prefix: /usr/bin/docker-handler
 
 dashboard_checker_command: "{{ dashboard_checker_cmd }} {{ dashboard_checker_cron }} {{ dashboard_checker_script_run }} {{ dashboard_checker_script_keys }}"
-dashboard_checker_cmd: "/kick_off"
-dashboard_checker_cron: '\0 \*/2 \* \* \*'
+dashboard_checker_cmd: "kick_off"
+dashboard_checker_cron: '\"\0 \*/2 \* \* \*'
 dashboard_checker_script_run: 'python3 /checker/dashboard_checker.py'
-dashboard_checker_script_keys: '-c 86400 -i -r'
+dashboard_checker_script_keys: '-c 86400 -i -r\"'
 
 dashboard_checker_volumes_basic: "{{ lookup('template', 'volumes.yml.j2') | from_yaml }}"
 dashboard_checker_volumes: []
