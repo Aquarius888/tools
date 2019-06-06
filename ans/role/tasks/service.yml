@@ -1,0 +1,7 @@
+---
+
+- include: service/docker.yml
+  when: dashboard_checker_deployment_type == 'docker'
+
+#- include: service/kubernetes.yml
+#  when: dashboard_checker_deployment_type == 'kubernetes'

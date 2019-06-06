@@ -13,4 +13,4 @@ COPY settings.py /checker
 COPY kick_off.sh /usr/sbin/kick_off
 RUN chmod 0777 /usr/sbin/kick_off
 
-CMD ["kick_off"]
+CMD kick_off "0 \*/2 \* \* \* python3 /checker/dashboard_checker.py -c 86400 -f RO -q Helios -i -r"

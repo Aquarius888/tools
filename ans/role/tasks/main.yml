@@ -1,0 +1,17 @@
+---
+
+ - include_tasks: directory.yml
+   tags:
+     - folders
+
+ - include_tasks: install.yml
+   tags:
+     - install
+
+ - include: config.yml
+   tags:
+     - config
+
+ - include: service.yml
+   tags:
+     - service

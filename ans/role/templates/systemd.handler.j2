@@ -1,0 +1,170 @@
+#!/bin/sh
+
+CONTAINER='{{ dashboard_checker_container_name }}'
+SERVICE='{{ dashboard_checker_service_label }}'
+IMAGE='{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}'
+ACTION="${1:-status}"
+shift
+
+case "${ACTION}" in
+
+status|st|s)
+  sudo systemctl status "${SERVICE}"
+;;
+start|on|+)
+  sudo systemctl start "${SERVICE}"
+;;
+stop|off|-)
+  sudo systemctl stop "${SERVICE}"
+;;
+reload|rl|r)
+  sudo systemctl reload "${SERVICE}"
+;;
+restart|rs)
+  sudo systemctl restart "${SERVICE}"
+;;
+enable|ebl)
+  sudo systemctl enable --now "${SERVICE}"
+;;
+disable|dbl)
+  sudo systemctl disable --now "${SERVICE}"
+;;
+unit|u)
+  systemctl cat "${SERVICE}"
+;;
+container|ps)
+  sudo docker ps --no-trunc --format "{{ '{{' }}.ID{{ '}}' }} {{ '{{' }}.Status{{ '}}' }} {{ '{{' }}.Image{{ '}}' }} {{ '{{' }}.Command{{ '}}' }}" --filter "name=${CONTAINER}"
+;;
+enter|en|in)
+  sudo docker exec -t -i "${CONTAINER}" /bin/sh
+;;
+nsenter|ns)
+  pid=$(sudo docker inspect --format "{{ '{{' }} .State.Pid {{ '}}' }}" "${CONTAINER}") #
+  if [ -n "${pid}" ]; then
+    sudo nsenter -t "${pid}" -p -n -i -u -w ${@}
+  else
+    echo "Main process PID was not found!"
+  fi
+;;
+hup|sh)
+  pid=$(sudo docker inspect --format "{{ '{{' }} .State.Pid {{ '}}' }}" "${CONTAINER}") #
+  echo "Send SIGHUP to the process: ${pid}"
+  sudo kill -HUP "${pid}"
+;;
+usr1|su1)
+  pid=$(sudo docker inspect --format "{{ '{{' }} .State.Pid {{ '}}' }}" "${CONTAINER}") #
+  echo "Send SIGHUP to the process: ${pid}"
+  sudo kill -HUP "${pid}"
+;;
+usr2|su2)
+  pid=$(sudo docker inspect --format "{{ '{{' }} .State.Pid {{ '}}' }}" "${CONTAINER}") #
+  echo "Send SIGHUP to the process: ${pid}"
+  sudo kill -HUP "${pid}"
+;;
+exec|exe|x)
+  sudo docker exec -t -i "${CONTAINER}" ${@}
+;;
+pull|pl|p)
+  sudo docker pull "${IMAGE}"
+;;
+log|tg|l|j)
+{% if dashboard_checker_docker_log_driver is defined and dashboard_checker_docker_log_driver == "syslog" %}
+  less -S -R  "/var/log/docker/${CONTAINER}/docker.log"
+{% else %}
+  sudo docker logs --timestamps "${CONTAINER}"
+{% endif %}
+;;
+tail|tl|t|f)
+{% if dashboard_checker_docker_log_driver is defined and dashboard_checker_docker_log_driver == "syslog" %}
+  tail -F  "/var/log/docker/${CONTAINER}/docker.log"
+{% else %}
+  sudo docker logs --timestamps --follow --tail "${1:-20}" "${CONTAINER}"
+{% endif %}
+;;
+diff|df)
+  sudo docker diff "${CONTAINER}"
+;;
+top|tp)
+  sudo docker top "${CONTAINER}"
+;;
+inspect|ins)
+  sudo docker inspect "${CONTAINER}"
+;;
+stats|cs)
+  sudo docker stats "${CONTAINER}"
+;;
+kill|k)
+  sudo docker kill "${CONTAINER}"
+;;
+remove|rm)
+  sudo docker rm -f "${CONTAINER}"
+;;
+
+direct)
+  sudo {{ dashboard_checker_docker_binary_path }} run \
+  --rm \
+  --name '{{ dashboard_checker_container_name }}' \
+  --net 'host' \
+{% for volume in (dashboard_checker_volumes_basic + dashboard_checker_volumes) %}
+--volume '{{ volume }}' \
+{% endfor %}
+{% if dashboard_checker_entrypoint is defined %}
+--entrypoint '{{ dashboard_checker_entrypoint }}' \
+{% endif %}
+{% if dashboard_checker_command is defined %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}' \
+{{ dashboard_checker_command }}
+{% else %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}'
+{% endif %}
+;;
+
+debug)
+  sudo {{ dashboard_checker_docker_binary_path }} run \
+  --rm \
+  --name '{{ dashboard_checker_container_name }}' \
+  --net 'host' \
+{% for volume in (dashboard_checker_volumes_basic + dashboard_checker_volumes) %}
+--volume '{{ volume }}' \
+{% endfor %}
+--tty \
+--interactive \
+--entrypoint '/bin/sh' \
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}'
+;;
+{% if dashboard_checker_instance_log_file_path is defined %}
+log-file|lf)
+  less --chop-long-lines -R +G "{{ dashboard_checker_instance_log_file_path }}"
+;;
+log-file-tail|lft)
+  tail -F "{{ dashboard_checker_instance_log_file_path }}"
+;;
+{% endif %}
+
+{% if dashboard_checker_instance_log_dir_path is defined %}
+logs)
+  find '{{ dashboard_checker_instance_log_dir_path }}' -type f
+;;
+{% endif %}
+{% if dashboard_checker_instance_config_file_path is defined %}
+config|cfg)
+  less --chop-long-lines -R "{{ dashboard_checker_instance_config_file_path }}"
+;;
+{% endif %}
+
+uninstall)
+  systemctl disable --now "${SERVICE}"
+  rm -vf '{{ dashboard_checker_systemd_service_dir_path }}/{{ dashboard_checker_service_label }}.service' && systemctl daemon-reload
+  docker rm -f '{{ dashboard_checker_container_name }}'
+  rm -vf '{{ dashboard_checker_handler_prefix }}-{{ dashboard_checker_container_name }}'
+;;
+help|?)
+  grep ')$' $0
+;;
+
+*)
+  echo "Unknown action: ${ACTION}"
+  exit 1
+;;
+
+esac

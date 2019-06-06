@@ -1,0 +1,10 @@
+---
+
+- name: "Create the config file for the container: {{ dashboard_checker_container_instance }}"
+  template:
+    src: "{{ dashboard_checker_config_file_template }}"
+    dest: "{{ dashboard_checker_instance_config_file_path }}"
+    owner: root
+    group: root
+    mode: 0644
+  register: dashboard_checker_trigger_config_file

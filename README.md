@@ -22,4 +22,5 @@ The tool has been tested with Python 3.6 (and 2.7, but 3.6 is recommended) and r
 <br/> $ python3 dashboard_checker.py -d graphite (goes through only graphite datasource panels, default time window and tag is 'NO DATA')
 <br/> $ python3 dashboard_checker.py -t TAG (goes through all implemented datasources panels, create annotations with tag TAG)
 <br/> $ python3 dashboard_checker.py -r (sends a report by email)
+<br/> $ python3 dashboard_checker.py -f FOLDER -q QUERY (looks for dashboards in specified grafana folder + query as part of name)
 <br/> $ python3 dashboard_checker.py -i (dry run, test mode)

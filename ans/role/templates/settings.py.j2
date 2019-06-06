@@ -1,0 +1,33 @@
+# prod admin (dashboard.horizon.tv)
+token = "{{ dashboard_checker_grafana_token }}"
+
+# annotation headers
+headers_annot = {"Authorization": "Bearer {}".format(token),
+                 'Accept': 'application/json',
+                 'Content-Type': 'application/json'}
+# request headers
+headers_request = {"Authorization": "Bearer {}".format(token),
+                   'Accept': 'application/json',
+                   'Content-Type': 'application/x-www-form-urlencoded'}
+
+# base url of grafana for report
+base = 'https://dashboard.horizon.tv/d'
+
+# actual url of grafana api
+url_api = "{{ dashboard_checker_url_api }}"
+
+# prod graphite datasource
+default_datasource_url = "{{ dashboard_checker_default_ds_url }}"
+default_datasource_name = "{{ dashboard_checker_default_ds_name }}"
+
+# list of dashboard names
+dash_list = ["{{ dashboard_checker_list_dashboards }}"]
+
+proxy = {}
+# proxy = {'socks5h': 'http://127.0.0.1:8800'}
+
+# list of email addresses for reporting
+receivers = ["{{ dashboard_checker_list_receivers }}"]
+
+# log level
+log_level = "{{ dashboard_checker_log_level }}"

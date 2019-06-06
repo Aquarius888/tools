@@ -1,0 +1,8 @@
+---
+
+- "/etc/localtime:/etc/localtime:ro"
+- "/etc/timezone:/etc/timezone:ro"
+
+- "{{ dashboard_checker_instance_config_dir_path }}:{{ dashboard_checker_container_config_dir_path }}:rw"
+- "{{ dashboard_checker_instance_log_dir_path }}:{{ dashboard_checker_container_log_dir_path }}:rw"
+

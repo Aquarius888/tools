@@ -1,0 +1,43 @@
+[Unit]
+Description=Docker Service {{ dashboard_checker_container_name }}
+After=network.service docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+
+Restart=always
+RestartSec=5
+
+ExecStartPre=-/bin/sh -c '{{ dashboard_checker_docker_binary_path }} stop -t 60 "{{ dashboard_checker_container_name }}" 2>/dev/null || true'
+ExecStartPre=-/bin/sh -c '{{ dashboard_checker_docker_binary_path }} rm -f "{{ dashboard_checker_container_name }}" 2>/dev/null || true'
+
+ExecStart={{ dashboard_checker_docker_binary_path }} run \
+--rm \
+--name '{{ dashboard_checker_container_name }}' \
+--net 'host' \
+{% for volume in (dashboard_checker_volumes_basic + dashboard_checker_volumes) %}
+--volume '{{ volume }}' \
+{% endfor %}
+{% if dashboard_checker_entrypoint is defined %}
+--entrypoint '{{ dashboard_checker_entrypoint }}' \
+{% endif %}
+{% if dashboard_checker_command is defined %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}' \
+{{ dashboard_checker_command }}
+{% else %}
+'{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}'
+{% endif %}
+
+ExecStop=-/bin/sh -c '{{ dashboard_checker_docker_binary_path }} stop -t 60 "{{ dashboard_checker_container_name }}" 2>/dev/null || true'
+ExecStopPost=-/bin/sh -c '{{ dashboard_checker_docker_binary_path }} rm -f "{{ dashboard_checker_container_name }}" 2>/dev/null || true'
+
+ExecReload={{ dashboard_checker_docker_binary_path }} restart '{{ dashboard_checker_container_name }}'
+
+StandardOutput={{ dashboard_checker_docker_log_output|default('null') }}
+StandardError={{ dashboard_checker_docker_log_output|default('null') }}
+
+SuccessExitStatus=SIGKILL SIGTERM 143 137
+
+[Install]
+WantedBy=docker.service

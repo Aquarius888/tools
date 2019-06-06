@@ -1,0 +1,17 @@
+---
+
+- name: Deploy Grafana Checker Tool
+  hosts: viepgrfpe39
+  environment: "{{ ansible_environment }}"
+  become: true
+
+  roles:
+
+    - role: dashboard_checker
+      dashboard_checker_deployment_type: docker
+      dashboard_checker_container_instance: test
+      dashboard_checker_command: "/kick_off '0 \\*/2 \\* \\* \\* python3 /checker/dashboard_checker.py -c 86400 -f RO -q Helios -i -r'"
+      dashboard_checker_list_dashboards: 'horizongo-all'
+      dashboard_checker_grafana_token: ''
+      tags:
+        - dashboard_checker

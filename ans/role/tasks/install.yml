@@ -1,0 +1,7 @@
+---
+
+- include: install/docker.yml
+  when: dashboard_checker_deployment_type == 'docker'
+
+#- include: install/kubernetes.yml
+#  when: dashboard_checker_deployment_type == 'kubernetes'

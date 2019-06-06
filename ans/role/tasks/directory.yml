@@ -1,0 +1,36 @@
+---
+
+- name: Create the global config dir
+  file:
+    path: "{{ dashboard_checker_config_dir_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Create the global log dir
+  file:
+    path: "{{ dashboard_checker_log_dir_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: "Create the config dir for the container: {{ dashboard_checker_container_instance }}"
+  file:
+    path: "{{ dashboard_checker_instance_config_dir_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+    recurse: yes
+
+- name: "Create the log dir for the container: {{ dashboard_checker_container_instance }}"
+  file:
+    path: "{{ dashboard_checker_instance_log_dir_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+    recurse: yes
+  when: dashboard_checker_deployment_type != 'kubernetes'
