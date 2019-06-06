@@ -1,4 +1,4 @@
-# TODO: search through folders, tags
+# TODO: write asserts for async functions
 # TODO: variable's handler in query (influx)
 # TODO: mark query as uncheckable by underscore after the alias
 
@@ -24,9 +24,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 try:
-    import settings
+    from config import settings
 except ImportError as err:
-    print("Make sure settings.py is in one directory with the tool. {err}".format(err=err))
+    print("Make sure settings.py is in 'config' directory. {err}".format(err=err))
 
 
 class GrafanaMaker:
@@ -142,12 +142,12 @@ class GrafanaMaker:
     async def find_annotation(self, gte, lte, dash_id, tag, limit=100):
         """
         Looks for annotations
-        :param gte:
-        :param lte:
-        :param dash_id:
-        :param tag:
-        :param limit:
-        :return:
+        :param gte: great than or equal time window (start)
+        :param lte: less than equal time window (end)
+        :param dash_id: dashboard's ID
+        :param tag: annotation's tag
+        :param limit: limit for search
+        :return: json with found annotations
         """
         composed_url = '{base}/annotations?from={gte}&to={lte}&tags={tag}&limit={limit}&dashboardId={dash_id}'.format(
             base=self.url_api,
@@ -163,7 +163,7 @@ class GrafanaMaker:
         """
         Removes old annotation
         :param annot_id: annotation id
-        :return:
+        :return: json with info about deleted annotations
         """
         composed_url = '{base}/annotations/{id}'.format(
             base=self.url_api,
@@ -289,10 +289,12 @@ class GrafanaMaker:
         return await response.json()
 
 
-def configure_logging(log_level):
+def configure_logging(log_level, log_name, log_folder):
     """
     Configures logger
     :param log_level: logging level (INFO, DEBUG...)
+    :param log_name: log filename
+    :param log_folder: name of log folder
     :return: object logger
     """
     logger = logging.getLogger(__name__)
@@ -303,8 +305,10 @@ def configure_logging(log_level):
     format_str = '%(asctime)s - %(levelname)s - %(message)s'
     formatter = logging.Formatter(fmt=format_str)
 
-    log_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'dashboard_checker.log')
-    rotating_hndlr = RotatingFileHandler(filename=log_path, maxBytes=5 * 1024 * 1024, backupCount=2)
+    log_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), log_folder)
+    log_path = os.path.join(log_dir, log_name)
+
+    rotating_hndlr = RotatingFileHandler(filename=log_path, maxBytes=5 * 1024 * 1024, backupCount=3)
     rotating_hndlr.setFormatter(formatter)
 
     logger.addHandler(rotating_hndlr)
@@ -495,10 +499,11 @@ async def graphite_flow(time_window, tag, meta_info, dash_id_info, dashboard_var
     if no_data == len(checked_list):
         report_preparation(dash_id_info, meta_info)
         if test_mode is False:
-            logger.debug(await annotation_inst.create_annotation(dash_id_info.id,
-                                                                 meta_info.panel_id,
-                                                                 ref_id(meta_info.target_json),
-                                                                 [tag]))
+            annotation_text = await annotation_inst.create_annotation(dash_id_info.id,
+                                                                      meta_info.panel_id,
+                                                                      ref_id(meta_info.target_json),
+                                                                      [tag])
+            logger.debug(annotation_text)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_info.title))
@@ -550,10 +555,11 @@ async def elasticsearch_flow(time_window, tag, datasource_db, datasource_id, met
     if len(hits) == 0:
         report_preparation(dash_id_info, meta_info)
         if test_mode is False:
-            logger.debug(await annotation_inst.create_annotation(dash_id_info.id,
-                                                                 meta_info.panel_id,
-                                                                 ref_id(meta_info.target_json),
-                                                                 [tag]))
+            annotation_text = await annotation_inst.create_annotation(dash_id_info.id,
+                                                                      meta_info.panel_id,
+                                                                      ref_id(meta_info.target_json),
+                                                                      [tag])
+            logger.debug(annotation_text)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_info.title))
@@ -601,10 +607,11 @@ async def influxdb_flow(time_window, tag, dash_id_info, meta_info, datasource_db
     if no_data == len(influx_check):
         report_preparation(dash_id_info, meta_info)
         if test_mode is False:
-            logger.debug(await annotation_inst.create_annotation(dash_id_info.id,
-                                                                 meta_info.panel_id,
-                                                                 ref_id(meta_info.target_json),
-                                                                 [tag]))
+            annotation_text = await annotation_inst.create_annotation(dash_id_info.id,
+                                                                      meta_info.panel_id,
+                                                                      ref_id(meta_info.target_json),
+                                                                      [tag])
+            logger.debug(annotation_text)
             logger.info("Annotation has been added on dashboard \"{dashboard}\" on panel \"{panel}\"".
                         format(dashboard=dash_id_info.name,
                                panel=meta_info.title))
@@ -760,6 +767,8 @@ async def main():
                 logger.info("Panel \"{panel}\" is uncheckable by notation 'abs'".format(panel=meta_dash.title))
                 continue
 
+            logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
+                        format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
             # handler of Grafana datasource name
             if 'default' in meta_dash.datasource:
                 datasource_info = await request_inst.datasource(settings.default_datasource_name)
@@ -771,23 +780,17 @@ async def main():
 
             if 'graphite' in datasource_info['type'] and ('graphite' in args.checker or 'all' in args.checker):
                 graphite_request += 1
-                logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
-                            format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
                 dash_tasks.append(asyncio.ensure_future(graphite_flow(timewindow, args.tag, meta_dash, dash_id_info,
                                                                       dashboard_vars, datasource_id, args.dry_run)))
 
             if 'elasticsearch' in datasource_info['type'] and ('elastic' in args.checker or 'all' in args.checker):
                 elastic_request += 1
-                logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
-                            format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
                 dash_tasks.append(asyncio.ensure_future(elasticsearch_flow(timewindow, args.tag, datasource_db,
                                                                            datasource_id, meta_dash, dash_id_info,
                                                                            args.dry_run)))
 
             if 'influxdb' in datasource_info['type'] and ('influxdb' in args.checker or 'all' in args.checker):
                 influx_request += 1
-                logger.info("Panel \"{panel}\" (query \"{query}\") is checking...".
-                            format(panel=meta_dash.title, query=ref_id(meta_dash.target_json)))
                 dash_tasks.append(asyncio.ensure_future(influxdb_flow(timewindow, args.tag, dash_id_info, meta_dash,
                                                                       datasource_db, datasource_id, args.dry_run)))
 
@@ -814,6 +817,9 @@ TIMEPREFIX = {'d': 86400,
               'daily': 86400,
               'minute': 60,
               'hourly': 3600}
+
+LOG_NAME = 'dashboard_checker.log'
+LOG_FOLDER = 'log'
 
 # contains dashboard info: id of panel, title of panel, datasource for panel ...
 Meta_dash = namedtuple('Meta_dash', ['panel_id', 'title', 'datasource', 'target_json'])
@@ -856,7 +862,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    logger = configure_logging(settings.log_level)
+    logger = configure_logging(settings.log_level, LOG_NAME, LOG_FOLDER)
     logger.info('-------------------------------------------------')
 
     if args.dry_run:
@@ -877,6 +883,7 @@ if __name__ == '__main__':
 
     ioloop = asyncio.get_event_loop()
 
+    # two ways get list of dashboards info: by folder (and query) or by specified list of dashboard's names
     if args.folder:
         ioloop.run_until_complete(get_dash_info_from_folder(args.folder, args.dash_query))
     else:
