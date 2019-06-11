@@ -1,0 +1,9 @@
+# delete old configmap
+kubectl --kubeconfig={{ dashboard_checker_kubeconfig_path }} -n {{ dashboard_checker_kubernetes_namespace }} delete configmap {{ dashboard_checker_container_name }}
+# delete old deployment
+kubectl --kubeconfig={{ dashboard_checker_kubeconfig_path }} -n {{ dashboard_checker_kubernetes_namespace }} delete deployment {{ dashboard_checker_container_name }}
+# create new configmap
+kubectl --kubeconfig={{ dashboard_checker_kubeconfig_path }} -n {{ dashboard_checker_kubernetes_namespace }} create configmap {{ dashboard_checker_container_name }} \
+--from-file {{ dashboard_checker_instance_config_dir_path }}
+# apply a configuration to a resource by filename
+kubectl --kubeconfig={{ dashboard_checker_kubeconfig_path }} apply -f {{ dashboard_checker_instance_kubernetes_deployment_file_path }}

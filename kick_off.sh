@@ -8,6 +8,6 @@ crond
 # trap SIGINT and SIGTERM signals and gracefully exit
 trap "echo \"stopping cron\"; kill \$!; exit" SIGINT SIGTERM
 # show logs by $docker logs -f
-touch /checker/dashboard_checker.log
-tail -f /checker/dashboard_checker.log 
+touch /checker/log/dashboard_checker.log
+tail -f /checker/log/dashboard_checker.log
 

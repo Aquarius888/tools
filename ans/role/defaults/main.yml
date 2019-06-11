@@ -13,9 +13,17 @@ dashboard_checker_deployment_type: docker
 dashboard_checker_init_type: upstart
 
 dashboard_checker_container_instance: main
-dashboard_checker_service_name: dash_watcher
+dashboard_checker_service_name: dash-checker
 dashboard_checker_container_name: "{{ dashboard_checker_service_name }}-{{ dashboard_checker_container_instance }}"
 dashboard_checker_service_label: "docker-{{ dashboard_checker_container_name }}"
+
+####
+
+dashboard_checker_kubernetes_deployment_file_name: deployment.yaml
+dashboard_checker_kubernetes_service_file_name: deployment.sh
+dashboard_checker_kubernetes_namespace: applications
+dashboard_checker_kubernetes_host_network: true
+dashboard_checker_kubernetes_replicas: 2
 
 ####
 
@@ -41,12 +49,9 @@ dashboard_checker_instance_log_file_path: "{{ dashboard_checker_instance_log_dir
 
 ####
 
-# K8s
-
-#dashboard_checker_instance_kubernetes_dir_path: "{{ dashboard_checker_instance_config_dir_path }}/kubernetes"
-#dashboard_checker_instance_kubernetes_deployment_file_path: "{{ dashboard_checker_instance_kubernetes_dir_path }}/{{ dashboard_checker_kubernetes_deployment_file_name }}"
-#dashboard_checker_instance_kubernetes_service_file_path: "{{ dashboard_checker_instance_kubernetes_dir_path }}/{{ dashboard_checker_kubernetes_service_file_name }}"
-
+dashboard_checker_instance_kubernetes_dir_path: "{{ dashboard_checker_instance_config_dir_path }}/kubernetes"
+dashboard_checker_instance_kubernetes_deployment_file_path: "{{ dashboard_checker_instance_kubernetes_dir_path }}/{{ dashboard_checker_kubernetes_deployment_file_name }}"
+dashboard_checker_instance_kubernetes_service_file_path: "{{ dashboard_checker_instance_kubernetes_dir_path }}/{{ dashboard_checker_kubernetes_service_file_name }}"
 
 ####
 
@@ -78,4 +83,6 @@ dashboard_checker_script_keys: "-c 86400 -i -r"
 
 dashboard_checker_volumes_basic: "{{ lookup('template', 'volumes.yml.j2') | from_yaml }}"
 dashboard_checker_volumes: []
+
+dashboard_checker_kubeconfig_path: '/etc/kubernetes/admin-local.conf'
 

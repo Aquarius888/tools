@@ -1,0 +1,10 @@
+---
+
+- name: "[Re]Initialize k8s configmaps and deployments for: {{ dashboard_checker_container_instance }}"
+  shell: "{{ dashboard_checker_instance_kubernetes_service_file_path }}"
+  when: dashboard_checker_restart_enabled|bool
+  run_once: true
+  tags:
+    - config
+    - deployment
+

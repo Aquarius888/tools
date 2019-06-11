@@ -1,0 +1,37 @@
+---
+
+kind: Deployment
+apiVersion: extensions/v1beta1
+metadata:
+  name: "{{ dashboard_checker_container_name }}"
+  namespace: applications
+spec:
+  replicas: {{ dashboard_checker_kubernetes_replicas|int }}
+  template:
+    metadata:
+      labels:
+        app: "{{ dashboard_checker_container_name }}"
+    spec:
+      hostname: "{{ dashboard_checker_container_name }}"
+      hostNetwork: {{ dashboard_checker_kubernetes_host_network|bool|string|lower }}
+      securityContext:
+        fsGroup: 1000
+      volumes:
+      - name: "volume-{{ dashboard_checker_container_name }}-config"
+        configMap:
+          name: "{{ dashboard_checker_container_name }}"
+          items:
+          - key: "{{ dashboard_checker_config_file_name }}"
+            path: "{{ dashboard_checker_config_file_name }}"
+      - name: "volume-{{ dashboard_checker_container_name }}-logs"
+        emptyDir: {}
+      containers:
+      - name: "{{ dashboard_checker_container_name }}"
+        image: "{{ dashboard_checker_image_source }}:{{ dashboard_checker_image_version }}"
+        volumeMounts:
+        - name: "volume-{{ dashboard_checker_container_name }}-config"
+          mountPath: "{{ dashboard_checker_container_config_dir_path }}"
+        - name: "volume-{{ dashboard_checker_container_name }}-logs"
+          mountPath: "{{ dashboard_checker_container_log_dir_path }}"
+        command: ["{{ dashboard_checker_cmd }}"]
+        args: [{{ dashboard_checker_cron }} {{ dashboard_checker_script_run }} {{ dashboard_checker_script_keys }}]

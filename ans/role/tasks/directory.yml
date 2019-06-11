@@ -15,6 +15,7 @@
     owner: root
     group: root
     mode: 0755
+  when: dashboard_checker_deployment_type != 'kubernetes'
 
 - name: "Create the config dir for the container: {{ dashboard_checker_container_instance }}"
   file:

@@ -1,0 +1,40 @@
+---
+
+- name: "Create the Kubernetes dir for the instance: {{ dashboard_checker_container_instance }}"
+  file:
+    path: "{{ dashboard_checker_instance_kubernetes_dir_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: "Install the Kubernetes deployment file for the instance: {{ dashboard_checker_container_instance }}"
+  template:
+    src: kubernetes/deployment.yml.j2
+    dest: "{{ dashboard_checker_instance_kubernetes_deployment_file_path }}"
+    owner: root
+    group: root
+    mode: 0644
+  register: dashboard_checker_trigger_kubernetes_deployment_file
+  tags:
+    - deployment
+
+- name: "Install the Kubernetes service file for the instance: {{ dashboard_checker_container_instance }}"
+  template:
+    src: kubernetes/deployment.sh.j2
+    dest: "{{ dashboard_checker_instance_kubernetes_service_file_path }}"
+    owner: root
+    group: root
+    mode: 0755
+  register: dashboard_checker_trigger_kubernetes_service_file
+  tags:
+    - deployment
+
+- name: "Notify the kubernetes for the instance: {{ dashboard_checker_container_instance }}"
+  set_fact:
+    dashboard_checker_restart_enabled: true
+  when: dashboard_checker_trigger_kubernetes_deployment_file|changed or
+    dashboard_checker_trigger_kubernetes_service_file|changed
+  tags:
+    - deployment
+
